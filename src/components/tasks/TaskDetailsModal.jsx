@@ -1,0 +1,593 @@
+import React, { useState } from 'react';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Avatar } from '@/components/ui/Avatar';
+import { Progress } from '@/components/ui/Progress';
+import { Select } from '@/components/ui/Select';
+import {
+  Calendar,
+  Clock,
+  User,
+  Paperclip,
+  Send,
+  CheckCircle,
+  AlertCircle,
+  History,
+  RotateCcw,
+  Sparkles,
+  Layers,
+  ArrowRight,
+  Plus,
+  Trash2,
+  FileText,
+  Download
+} from 'lucide-react';
+import { useData } from '@/context/DataContext';
+import { useAuth } from '@/context/AuthContext';
+import {
+  formatDate,
+  formatTimeAgo,
+  isOverdue,
+  getPriorityBadgeColor,
+  getStatusBadgeColor,
+  cn
+} from '@/lib/utils';
+
+export function TaskDetailsModal({ isOpen, onClose, taskId, onOpenCreateSubtask }) {
+  const {
+    tasks,
+    projects,
+    teams,
+    profiles,
+    comments,
+    attachments,
+    activity,
+    updateTask,
+    submitTaskForReview,
+    approveTaskReview,
+    requestChangesReview,
+    deleteTask,
+    addComment,
+    addAttachment,
+    getSubtasks
+  } = useData();
+
+  const { user, role } = useAuth();
+
+  const [newComment, setNewComment] = useState('');
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [isRequestingChanges, setIsRequestingChanges] = useState(false);
+  const [activeTab, setActiveTab] = useState('comments'); // 'comments' | 'attachments' | 'subtasks' | 'activity'
+
+  const task = tasks.find(t => t.id === taskId);
+
+  if (!task) return null;
+
+  const project = projects.find(p => p.id === task.project_id);
+  const team = teams.find(t => t.id === task.team_id);
+  const assignee = profiles.find(p => p.id === task.assigned_to);
+  const creator = profiles.find(p => p.id === task.created_by);
+  const taskComments = comments.filter(c => c.task_id === task.id);
+  const taskAttachments = attachments.filter(a => a.task_id === task.id);
+  const taskActivity = activity.filter(a => a.task_id === task.id);
+  const subtasks = getSubtasks(task.id);
+
+  const isAssignedToMe = task.assigned_to === user?.id;
+  const isLeader = role === 'team_leader' || role === 'admin';
+  const taskIsOverdue = isOverdue(task.due_date, task.status);
+
+  const handleCommentSubmit = (e) => {
+    e.preventDefault();
+    if (!newComment.trim()) return;
+    addComment(task.id, newComment.trim());
+    setNewComment('');
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      addAttachment(task.id, {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: URL.createObjectURL(file)
+      });
+    }
+  };
+
+  const handleRequestChangesSubmit = (e) => {
+    e.preventDefault();
+    if (!feedbackComment.trim()) return;
+    requestChangesReview(task.id, feedbackComment.trim());
+    setFeedbackComment('');
+    setIsRequestingChanges(false);
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="xl"
+      className="p-0"
+    >
+      {/* Top Banner / Breadcrumb */}
+      <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <span>{team?.name || 'Team Workspace'}</span>
+            {project && (
+              <>
+                <ArrowRight className="w-3 h-3" />
+                <span className="text-primary-600 dark:text-primary-400 font-semibold">{project.name}</span>
+              </>
+            )}
+            {task.parent_task_id && (
+              <>
+                <ArrowRight className="w-3 h-3" />
+                <span className="text-slate-600 dark:text-slate-400">Subtask</span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={cn('text-xs font-semibold px-2.5 py-1 rounded-full border', getPriorityBadgeColor(task.priority))}>
+              {task.priority} Priority
+            </span>
+            <span className={cn('text-xs font-semibold px-2.5 py-1 rounded-full border', getStatusBadgeColor(task.status))}>
+              {task.status}
+            </span>
+          </div>
+        </div>
+
+        <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+          {task.title}
+        </h2>
+        {task.description && (
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-2 leading-relaxed">
+            {task.description}
+          </p>
+        )}
+
+        {/* Progress Bar */}
+        <div className="mt-4 pt-4 border-t border-slate-200/60 dark:border-slate-800">
+          <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 mb-1.5 font-medium">
+            <span>Task Completion Progress</span>
+            <span className="font-bold text-slate-900 dark:text-slate-200">{task.progress}%</span>
+          </div>
+          <Progress value={task.progress} />
+        </div>
+      </div>
+
+      {/* Main Content & Workflow */}
+      <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Details & Tabs */}
+        <div className="lg:col-span-2 space-y-5">
+          {/* Workflow Action Bar */}
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-primary-600" />
+                Workflow Action Center
+              </span>
+              {taskIsOverdue && (
+                <span className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> Overdue
+                </span>
+              )}
+            </div>
+
+            {/* Member Review Submission */}
+            {task.status !== 'Completed' && task.status !== 'Under Review' && (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  size="sm"
+                  onClick={() => submitTaskForReview(task.id)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Submit for Review
+                </Button>
+                <span className="text-xs text-slate-500">
+                  Notify team leader to verify completion.
+                </span>
+              </div>
+            )}
+
+            {/* Team Leader Review Actions */}
+            {task.status === 'Under Review' && (
+              <div className="space-y-3">
+                <p className="text-xs text-purple-700 dark:text-purple-300 font-medium">
+                  This task is currently under review by the team leader.
+                </p>
+                {isLeader ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      size="sm"
+                      onClick={() => approveTaskReview(task.id)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      Approve & Mark Completed
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsRequestingChanges(true)}
+                      className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Request Changes
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">
+                    Awaiting review decision from team leader.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Changes Requested Feedback Box */}
+            {isRequestingChanges && (
+              <form onSubmit={handleRequestChangesSubmit} className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                <label className="block text-xs font-semibold text-amber-800 dark:text-amber-400">
+                  Provide Change Request Feedback:
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Explain what needs to be modified before approval..."
+                  value={feedbackComment}
+                  onChange={(e) => setFeedbackComment(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <div className="flex justify-end gap-2">
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setIsRequestingChanges(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" className="bg-amber-600 hover:bg-amber-700 text-white">
+                    Submit Feedback
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {task.status === 'Completed' && (
+              <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                <CheckCircle className="w-4 h-4" />
+                This task was approved and completed!
+              </div>
+            )}
+          </div>
+
+          {/* Navigation Tabs (Subtasks, Comments, Attachments, Activity) */}
+          <div className="border-b border-slate-200 dark:border-slate-800 flex gap-6">
+            <button
+              onClick={() => setActiveTab('comments')}
+              className={cn(
+                'pb-2.5 text-xs font-semibold transition-colors border-b-2',
+                activeTab === 'comments'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              )}
+            >
+              Comments ({taskComments.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('subtasks')}
+              className={cn(
+                'pb-2.5 text-xs font-semibold transition-colors border-b-2',
+                activeTab === 'subtasks'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              )}
+            >
+              Subtasks ({subtasks.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('attachments')}
+              className={cn(
+                'pb-2.5 text-xs font-semibold transition-colors border-b-2',
+                activeTab === 'attachments'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              )}
+            >
+              Attachments ({taskAttachments.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('activity')}
+              className={cn(
+                'pb-2.5 text-xs font-semibold transition-colors border-b-2',
+                activeTab === 'activity'
+                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              )}
+            >
+              Activity History ({taskActivity.length})
+            </button>
+          </div>
+
+          {/* Tab 1: Comments */}
+          {activeTab === 'comments' && (
+            <div className="space-y-4">
+              <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                {taskComments.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-4">No comments yet. Start the conversation!</p>
+                ) : (
+                  taskComments.map((c) => {
+                    const author = profiles.find(p => p.id === c.user_id);
+                    return (
+                      <div key={c.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-start gap-3">
+                        <Avatar src={author?.avatar_url} name={author?.full_name} size="sm" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                              {author?.full_name || 'Team Member'}
+                            </span>
+                            <span className="text-[10px] text-slate-400">{formatTimeAgo(c.created_at)}</span>
+                          </div>
+                          <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{c.comment}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Add Comment Input */}
+              <form onSubmit={handleCommentSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Write a comment..."
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  className="flex-1 px-3.5 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                />
+                <Button type="submit" size="sm" className="gap-1.5">
+                  <Send className="w-3.5 h-3.5" />
+                  Post
+                </Button>
+              </form>
+            </div>
+          )}
+
+          {/* Tab 2: Subtasks Breakdown */}
+          {activeTab === 'subtasks' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">
+                  {subtasks.filter(s => s.status === 'Completed').length} of {subtasks.length} Completed
+                </span>
+                {onOpenCreateSubtask && (
+                  <Button size="sm" variant="outline" onClick={() => onOpenCreateSubtask(task.id)} className="gap-1 text-xs">
+                    <Plus className="w-3.5 h-3.5" /> Add Subtask
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {subtasks.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-4">No subtasks defined yet.</p>
+                ) : (
+                  subtasks.map((st) => (
+                    <div
+                      key={st.id}
+                      className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className={cn('w-2 h-2 rounded-full shrink-0', st.status === 'Completed' ? 'bg-emerald-500' : 'bg-primary-500')} />
+                        <span className={cn('text-xs font-medium truncate', st.status === 'Completed' && 'line-through text-slate-400')}>
+                          {st.title}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', getStatusBadgeColor(st.status))}>
+                          {st.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Attachments */}
+          {activeTab === 'attachments' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Uploaded Files</span>
+                <label className="cursor-pointer text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors inline-flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5" />
+                  Upload Attachment
+                  <input type="file" onChange={handleFileUpload} className="hidden" />
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                {taskAttachments.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-4">No attachments uploaded yet.</p>
+                ) : (
+                  taskAttachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900"
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <FileText className="w-4 h-4 text-primary-600 shrink-0" />
+                        <div className="truncate">
+                          <p className="text-xs font-medium text-slate-900 dark:text-slate-100 truncate">{att.file_name}</p>
+                          <span className="text-[10px] text-slate-400">{Math.round((att.file_size || 1024) / 1024)} KB</span>
+                        </div>
+                      </div>
+                      <a
+                        href={att.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 text-slate-400 hover:text-primary-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 4: Activity History */}
+          {activeTab === 'activity' && (
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {taskActivity.length === 0 ? (
+                <p className="text-xs text-slate-400 italic text-center py-4">No activity logged yet.</p>
+              ) : (
+                taskActivity.map((act) => {
+                  const actor = profiles.find(p => p.id === act.user_id);
+                  return (
+                    <div key={act.id} className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <History className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>
+                          <strong className="text-slate-800 dark:text-slate-200">{actor?.full_name || 'System'}</strong>:{' '}
+                          <span className="text-slate-600 dark:text-slate-400 capitalize">{act.action.replace('_', ' ')}</span>
+                          {act.new_value && (
+                            <span className="font-semibold text-primary-600 dark:text-primary-400 ml-1">
+                              &rarr; {act.new_value}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 shrink-0">{formatTimeAgo(act.created_at)}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Meta Attributes & Controls */}
+        <div className="space-y-4 bg-slate-50/50 dark:bg-slate-800/30 p-4 rounded-xl border border-slate-200/80 dark:border-slate-800">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+            Task Metadata
+          </h4>
+
+          {/* Quick Status Selector */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Status</label>
+            {isLeader ? (
+              <select
+                value={task.status}
+                onChange={(e) => updateTask(task.id, { status: e.target.value })}
+                className="w-full text-xs p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold"
+              >
+                <option value="To Do">To Do</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Under Review">Under Review</option>
+                <option value="Changes Requested">Changes Requested</option>
+                <option value="Completed">Completed</option>
+                <option value="Blocked">Blocked</option>
+              </select>
+            ) : isAssignedToMe ? (
+              <select
+                value={task.status}
+                onChange={(e) => {
+                  if (e.target.value === 'Under Review') {
+                    submitTaskForReview(task.id);
+                  } else {
+                    updateTask(task.id, { status: e.target.value });
+                  }
+                }}
+                className="w-full text-xs p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold"
+              >
+                <option value="To Do">To Do</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Under Review">Submit for Review</option>
+                <option value="Blocked">Blocked</option>
+              </select>
+            ) : (
+              <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                {task.status}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Priority Selector */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Priority</label>
+            {isLeader ? (
+              <select
+                value={task.priority}
+                onChange={(e) => updateTask(task.id, { priority: e.target.value })}
+                className="w-full text-xs p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-semibold"
+              >
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+                <option value="Urgent">Urgent</option>
+              </select>
+            ) : (
+              <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                {task.priority} Priority
+              </div>
+            )}
+          </div>
+
+          {/* Assignee */}
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Assigned Member</label>
+            <div className="flex items-center gap-2.5 p-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
+              <Avatar src={assignee?.avatar_url} name={assignee?.full_name} size="sm" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                  {assignee?.full_name || 'Unassigned'}
+                </p>
+                <p className="text-[10px] text-slate-400 truncate">{assignee?.email}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Dates */}
+          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> Start Date:
+              </span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{formatDate(task.start_date)}</span>
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" /> Due Date:
+              </span>
+              <span className={cn('font-semibold', taskIsOverdue ? 'text-rose-600' : 'text-slate-800 dark:text-slate-200')}>
+                {formatDate(task.due_date)}
+              </span>
+            </div>
+          </div>
+
+          {/* Delete Task */}
+          {isLeader && (
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to delete this task?")) {
+                    deleteTask(task.id);
+                    onClose();
+                  }
+                }}
+                className="w-full text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 py-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Task
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}

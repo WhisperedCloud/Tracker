@@ -25,7 +25,7 @@ export function Avatar({ src, name, size = 'md', className }) {
   return (
     <div
       className={cn(
-        'relative inline-flex items-center justify-center rounded-full overflow-hidden shrink-0 select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-medium border border-slate-200 dark:border-slate-800',
+        'relative inline-flex items-center justify-center rounded-full overflow-hidden shrink-0 select-none bg-primary-100 text-primary-800 dark:bg-primary-950 dark:text-primary-200 font-semibold border border-slate-200 dark:border-slate-800',
         sizes[size],
         className
       )}

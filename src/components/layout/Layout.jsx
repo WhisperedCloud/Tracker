@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { MainDashboard } from '@/pages/dashboard/MainDashboard';
@@ -12,7 +12,10 @@ import { NotificationsPage } from '@/pages/notifications/NotificationsPage';
 import { ReportsPage } from '@/pages/reports/ReportsPage';
 import { UserProfile } from '@/pages/profile/UserProfile';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
-import { AdminManagement } from '@/pages/admin/AdminManagement';
+import { StudySessionsPage } from '@/pages/study/StudySessionsPage';
+import { ResourcesPage } from '@/pages/study/ResourcesPage';
+import { QABoardPage } from '@/pages/study/QABoardPage';
+import { FocusPage } from '@/pages/study/FocusPage';
 
 import { CreateTaskModal } from '@/components/tasks/CreateTaskModal';
 import { CreateProjectModal } from '@/components/projects/CreateProjectModal';
@@ -20,12 +23,22 @@ import { CreateTeamModal } from '@/components/teams/CreateTeamModal';
 import { TaskDetailsModal } from '@/components/tasks/TaskDetailsModal';
 
 import { useNotifications } from '@/context/NotificationContext';
-import { Sparkles, Bell, X } from 'lucide-react';
+import { Bell, AlertCircle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function Layout() {
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  // Desktop sidebar collapse, remembered between visits.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem('tasksync_sidebar_collapsed') === 'true'
+  );
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((prev) => {
+      localStorage.setItem('tasksync_sidebar_collapsed', String(!prev));
+      return !prev;
+    });
+  };
   const [searchQuery, setSearchQuery] = useState('');
 
   // Selected Team & Project detail navigation state
@@ -46,6 +59,20 @@ export function Layout() {
   const [activeTaskId, setActiveTaskId] = useState(null);
 
   const { toastNotification, clearToast } = useNotifications();
+
+  // Invite links look like /?invite=<token>. Open the Teams page, where the
+  // pending invitation is shown with Accept / Decline, and tidy the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('invite')) {
+      setCurrentTab('teams');
+      params.delete('invite');
+      const query = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+    }
+  }, []);
+
+  const isErrorToast = toastNotification?.type === 'error';
 
   // Handlers
   const handleOpenTaskDetails = (taskId) => {
@@ -95,19 +122,31 @@ export function Layout() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex transition-colors">
       {/* Toast Notification Banner */}
       {toastNotification && (
-        <div className="fixed bottom-5 right-5 z-50 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-primary-200 dark:border-primary-800 shadow-2xl flex items-start gap-3 max-w-sm animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="p-2 rounded-xl bg-primary-100 text-primary-700 dark:bg-primary-950 dark:text-primary-300 shrink-0">
-            <Bell className="w-4 h-4" />
+        <div
+          key={toastNotification.id}
+          role={isErrorToast ? 'alert' : 'status'}
+          className={cn(
+            'fixed bottom-5 right-5 z-[90] w-[min(24rem,calc(100vw-2.5rem))] p-4 rounded-2xl bg-surface dark:bg-slate-900 border shadow-popover flex items-start gap-3 overflow-hidden animate-toast-in',
+            isErrorToast ? 'border-rose-300 dark:border-rose-800' : 'border-primary-200 dark:border-primary-800'
+          )}
+        >
+          <div className={cn(
+            'p-2 rounded-xl shrink-0',
+            isErrorToast
+              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+              : 'bg-primary-100 text-primary-700 dark:bg-primary-950 dark:text-primary-300'
+          )}>
+            {isErrorToast ? <AlertCircle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
           </div>
           <div className="flex-1 min-w-0">
             <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
               {toastNotification.title}
             </h4>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2">
+            <p className={cn('text-xs text-slate-600 dark:text-slate-400 mt-0.5', isErrorToast ? 'line-clamp-4' : 'line-clamp-2')}>
               {toastNotification.message}
             </p>
           </div>
-          <button onClick={clearToast} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <button onClick={clearToast} aria-label="Dismiss" className="p-0.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-slate-200">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -119,10 +158,12 @@ export function Layout() {
         setCurrentTab={handleTabChange}
         isMobileOpen={isMobileOpen}
         setIsMobileOpen={setIsMobileOpen}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 transition-all duration-300 lg:pl-64">
+      <div className={cn('flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ease-in-out', isSidebarCollapsed ? 'lg:pl-[72px]' : 'lg:pl-64')}>
         <Header
           setIsMobileOpen={setIsMobileOpen}
           onOpenNewTaskModal={() => handleOpenNewTaskModal()}
@@ -185,7 +226,13 @@ export function Layout() {
             )
           )}
 
-          {currentTab === 'admin' && <AdminManagement />}
+          {currentTab === 'sessions' && <StudySessionsPage />}
+
+          {currentTab === 'resources' && <ResourcesPage />}
+
+          {currentTab === 'qa' && <QABoardPage />}
+
+          {currentTab === 'focus' && <FocusPage />}
 
           {currentTab === 'notifications' && (
             <NotificationsPage onOpenTaskDetails={handleOpenTaskDetails} />

@@ -25,7 +25,8 @@ import { useData } from '@/context/DataContext';
 
 export function SettingsPage() {
   const { theme, toggleTheme } = useTheme();
-  const { tablesExist } = useData();
+  const { tablesExist, refresh } = useData();
+  const [syncing, setSyncing] = useState(false);
 
   const [copiedSql, setCopiedSql] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
@@ -39,22 +40,16 @@ export function SettingsPage() {
     setTimeout(() => setCopiedSql(false), 2500);
   };
 
-  const handleResetDemoData = () => {
-    if (window.confirm("Clear all local storage cache and reload live data from Supabase?")) {
-      localStorage.removeItem('tasksync_tasks');
-      localStorage.removeItem('tasksync_projects');
-      localStorage.removeItem('tasksync_personal_tasks');
-      localStorage.removeItem('tasksync_notifications');
-      localStorage.removeItem('tasksync_comments');
-      localStorage.removeItem('tasksync_attachments');
-      localStorage.removeItem('tasksync_teams');
-      localStorage.removeItem('tasksync_team_members');
-      localStorage.removeItem('tasksync_profiles');
-      setResetSuccess(true);
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
-    }
+  const handleResync = async () => {
+    setSyncing(true);
+    // Older versions kept copies of data in localStorage; remove any leftovers.
+    Object.keys(localStorage)
+      .filter(key => key.startsWith('tasksync_') && !['tasksync_theme', 'tasksync_sidebar_collapsed'].includes(key))
+      .forEach(key => localStorage.removeItem(key));
+    await refresh();
+    setSyncing(false);
+    setResetSuccess(true);
+    setTimeout(() => setResetSuccess(false), 2500);
   };
 
   return (
@@ -71,7 +66,7 @@ export function SettingsPage() {
       {resetSuccess && (
         <div className="p-3 text-xs font-semibold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4" />
-          Demo data reset! Reloading application...
+          Data reloaded from Supabase.
         </div>
       )}
 
@@ -118,17 +113,17 @@ export function SettingsPage() {
                     <CheckCircle2 className="w-3 h-3" /> Connected to Supabase ({tablesExist ? "Schema Ready" : "Tables Pending Migration"})
                   </Badge>
                 ) : (
-                  <Badge variant="primary" className="gap-1">
-                    <Sparkles className="w-3 h-3" /> Live Demo Mode (Interactive Local Store)
+                  <Badge variant="warning" className="gap-1">
+                    <AlertCircle className="w-3 h-3" /> Not configured
                   </Badge>
                 )}
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">
                 {isSupabaseConfigured
                   ? tablesExist
-                    ? "Connected to real Supabase project. Authentication, Realtime subscriptions, and Row Level Security active."
-                    : "Connected to project https://uaawewbrsqhtsucsidif.supabase.co! Run the SQL schema from /supabase/schema.sql in your Supabase SQL Editor to initialize all 11 PostgreSQL tables."
-                  : "Currently running with full interactive state and realistic seed data. All 20 features and pages are 100% operational."}
+                    ? "All data is stored in Supabase. Sign-in, realtime updates and row-level security are active."
+                    : "Some tables could not be read. Run supabase/schema.sql in the Supabase SQL Editor, then resync."
+                  : "Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env and restart the app."}
               </p>
             </div>
           </div>
@@ -160,16 +155,17 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-slate-500">
-            Clear locally stored cache and pull fresh records directly from your connected Supabase PostgreSQL database.
+            Reload all teams, projects and tasks from Supabase. Use this if something looks out of date.
           </p>
           <Button
             variant="outline"
             size="sm"
-            onClick={handleResetDemoData}
+            onClick={handleResync}
+            disabled={syncing}
             className="text-xs gap-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Clear Local Cache & Resync
+            {syncing ? 'Reloading...' : 'Reload Data from Supabase'}
           </Button>
         </CardContent>
       </Card>

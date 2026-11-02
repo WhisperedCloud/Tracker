@@ -23,7 +23,7 @@ export function SmartWorkloadBalancer({ teamId, selectedMemberId, onSelectMember
     <div className="space-y-4">
       {/* Smart Recommendation Banner */}
       {recommended && (
-        <div className="p-4 rounded-xl bg-gradient-to-r from-primary-50 to-indigo-50/80 dark:from-primary-950/40 dark:to-indigo-950/20 border border-primary-200/80 dark:border-primary-800/60 shadow-xs">
+        <div className="p-4 rounded-xl bg-primary-50 dark:bg-primary-950/40 border border-primary-200/80 dark:border-primary-800/60 shadow-xs">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3">
               <div className="p-2 bg-primary-600 text-white rounded-lg shrink-0 shadow-xs">
@@ -64,14 +64,14 @@ export function SmartWorkloadBalancer({ teamId, selectedMemberId, onSelectMember
       {/* Member Workload Matrix */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs text-slate-500 font-medium px-1">
-          <span>Team Capacity & Bandwidth Breakdown</span>
+          <span>Group Workload Breakdown</span>
           <span>{allMembers.length} Members</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {allMembers.length === 0 ? (
-            <div className="col-span-2 p-6 text-center bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 italic">
-              No team members enrolled in this workspace yet. Invite members to balance team workload.
+            <div className="col-span-2 p-6 text-center bg-surface dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 italic">
+              No members in this group yet. Invite classmates to share the work.
             </div>
           ) : (
             allMembers.map((item) => {
@@ -87,7 +87,7 @@ export function SmartWorkloadBalancer({ teamId, selectedMemberId, onSelectMember
                     onSelectMember ? 'cursor-pointer hover:border-primary-400 hover:shadow-xs' : '',
                     isSelected
                       ? 'border-primary-500 bg-primary-50/30 dark:bg-primary-950/20 ring-2 ring-primary-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                      : 'border-slate-200 dark:border-slate-800 bg-surface dark:bg-slate-900'
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -102,7 +102,7 @@ export function SmartWorkloadBalancer({ teamId, selectedMemberId, onSelectMember
                             <Sparkles className="w-3 h-3 text-primary-600 dark:text-primary-400" title="Recommended" />
                           )}
                         </div>
-                        <span className="text-[11px] text-slate-500 capitalize">{item.role}</span>
+                        <span className="text-[11px] text-slate-500">{item.role === 'member' ? 'Member' : 'Organizer'}</span>
                       </div>
                     </div>
 

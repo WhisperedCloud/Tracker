@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { StatCard } from '@/components/ui/StatCard';
+import { isOverdue, parseDate } from '@/lib/utils';
+import { chartTooltipStyle, chartTick, chartCursor } from '@/lib/chartTheme';
 import {
   BarChart3,
   TrendingUp,
@@ -38,8 +41,20 @@ export function ReportsPage() {
   const completedTasks = tasks.filter(t => t.status === 'Completed').length;
   const inProgressTasks = tasks.filter(t => t.status === 'In Progress').length;
   const underReviewTasks = tasks.filter(t => t.status === 'Under Review').length;
-  const onTimeTasks = tasks.filter(t => t.status === 'Completed').length; // sample on-time benchmark
-  const delayedProjects = projects.filter(p => p.status === 'On Hold' || p.status === 'In Progress' && new Date(p.due_date) < new Date()).length;
+  const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  // On time = completed on or before the due date. The completion time is
+  // taken from updated_at, which is set when a task is approved.
+  const completedWithDueDate = tasks.filter(t => t.status === 'Completed' && t.due_date && t.updated_at);
+  const onTimeCount = completedWithDueDate.filter(t => {
+    const due = parseDate(t.due_date);
+    due.setHours(23, 59, 59, 999);
+    return new Date(t.updated_at) <= due;
+  }).length;
+  const onTimeRate = completedWithDueDate.length > 0 ? Math.round((onTimeCount / completedWithDueDate.length) * 100) : null;
+
+  // Past their target date and not finished or cancelled.
+  const delayedProjects = projects.filter(p => p.status !== 'Cancelled' && isOverdue(p.due_date, p.status)).length;
 
   // Chart 1: Project Completion Rates
   const projectRatesData = projects.map(p => ({
@@ -48,22 +63,46 @@ export function ReportsPage() {
   }));
 
   // Chart 2: Task Distribution Among Members
-  const memberDistributionData = profiles.map(member => {
-    const workload = getMemberWorkload(member.id);
-    return {
-      name: member.full_name.split(' ')[0],
-      active: workload.activeCount,
-      completed: workload.completedCount,
-    };
-  });
+  // Only people who are in one of your teams.
+  const teamUserIds = new Set(teamMembers.map(tm => tm.user_id));
+  const memberDistributionData = profiles
+    .filter(member => teamUserIds.has(member.id))
+    .map(member => {
+      const workload = getMemberWorkload(member.id);
+      return {
+        name: member.full_name,
+        active: workload.activeCount,
+        completed: workload.completedCount,
+      };
+    });
 
-  // Chart 3: Weekly / Monthly Productivity Trends
-  const productivityTrendData = [
-    { period: 'Week 1', velocity: 65, completed: 8 },
-    { period: 'Week 2', velocity: 78, completed: 14 },
-    { period: 'Week 3', velocity: 85, completed: 19 },
-    { period: 'Week 4', velocity: 92, completed: 26 },
-  ];
+  // Chart 3: tasks created vs completed over the last 6 weeks or months.
+  const productivityTrendData = useMemo(() => {
+    const now = new Date();
+    const buckets = Array.from({ length: 6 }, (_, i) => {
+      const back = 5 - i;
+      if (timeframe === 'weekly') {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay() - back * 7);
+        const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+        return { start, end, period: new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(start) };
+      }
+      const start = new Date(now.getFullYear(), now.getMonth() - back, 1);
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+      return { start, end, period: new Intl.DateTimeFormat(undefined, { month: 'short' }).format(start) };
+    });
+    const inBucket = (value, b) => {
+      if (!value) return false;
+      const d = new Date(value);
+      return d >= b.start && d < b.end;
+    };
+    return buckets.map(b => ({
+      period: b.period,
+      created: tasks.filter(t => inBucket(t.created_at, b)).length,
+      completed: tasks.filter(t => t.status === 'Completed' && inBucket(t.updated_at, b)).length,
+    }));
+  }, [tasks, timeframe]);
+
+  const completedThisPeriod = productivityTrendData[productivityTrendData.length - 1]?.completed ?? 0;
 
   return (
     <div className="space-y-6">
@@ -71,10 +110,10 @@ export function ReportsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-            Analytics & Team Reports
+            Study Reports
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Deep dive into project delivery velocity, individual member productivity, and workload distribution.
+            How your study groups are progressing: subjects, tasks and who is doing what.
           </p>
         </div>
 
@@ -82,13 +121,13 @@ export function ReportsPage() {
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs font-semibold">
             <button
               onClick={() => setTimeframe('weekly')}
-              className={`px-3 py-1.5 rounded-md transition-all ${timeframe === 'weekly' ? 'bg-white dark:bg-slate-900 text-primary-600 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-md transition-all ${timeframe === 'weekly' ? 'bg-surface dark:bg-slate-900 text-primary-600 shadow-xs' : 'text-slate-500'}`}
             >
               Weekly
             </button>
             <button
               onClick={() => setTimeframe('monthly')}
-              className={`px-3 py-1.5 rounded-md transition-all ${timeframe === 'monthly' ? 'bg-white dark:bg-slate-900 text-primary-600 shadow-xs' : 'text-slate-500'}`}
+              className={`px-3 py-1.5 rounded-md transition-all ${timeframe === 'monthly' ? 'bg-surface dark:bg-slate-900 text-primary-600 shadow-xs' : 'text-slate-500'}`}
             >
               Monthly
             </button>
@@ -98,29 +137,19 @@ export function ReportsPage() {
 
       {/* High-level KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-4 sm:p-5">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Completed Tasks</span>
-          <h3 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{completedTasks}</h3>
-          <span className="text-[11px] text-slate-400 mt-0.5 block">{totalTasks} total tasks tracked</span>
-        </Card>
-
-        <Card className="p-4 sm:p-5">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Overall Velocity</span>
-          <h3 className="text-2xl font-bold text-primary-600 dark:text-primary-400 mt-1">88.4%</h3>
-          <span className="text-[11px] text-emerald-600 font-semibold mt-0.5 block">&uarr; +12% from last cycle</span>
-        </Card>
-
-        <Card className="p-4 sm:p-5">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">On-Time Completion</span>
-          <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">94%</h3>
-          <span className="text-[11px] text-slate-400 mt-0.5 block">High SLA reliability</span>
-        </Card>
-
-        <Card className="p-4 sm:p-5">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Delayed Projects</span>
-          <h3 className="text-2xl font-bold text-rose-600 mt-1">{delayedProjects}</h3>
-          <span className="text-[11px] text-slate-400 mt-0.5 block">Critical milestone alerts</span>
-        </Card>
+        <StatCard index={0} label="Completed Tasks" value={completedTasks} hint={`${totalTasks} team tasks tracked`} icon={CheckCircle2} tone="moss" />
+        <StatCard index={1} label="Completion Rate" value={completionRate} suffix="%" hint={`${completedThisPeriod} completed this ${timeframe === 'weekly' ? 'week' : 'month'}`} icon={TrendingUp} tone="brown" progress={completionRate} />
+        <StatCard
+          index={2}
+          label="On-Time Completion"
+          value={onTimeRate ?? 'N/A'}
+          suffix={onTimeRate === null ? '' : '%'}
+          hint={onTimeRate === null ? 'No completed tasks with due dates yet' : `${onTimeCount} of ${completedWithDueDate.length} finished by their due date`}
+          icon={Clock}
+          tone="teal"
+          progress={onTimeRate ?? undefined}
+        />
+        <StatCard index={3} label="Overdue Subjects" value={delayedProjects} hint={delayedProjects > 0 ? 'Past their target date' : 'All subjects on track'} icon={AlertTriangle} tone={delayedProjects > 0 ? 'terracotta' : 'neutral'} />
       </div>
 
       {/* Visual Charts Grid */}
@@ -128,17 +157,17 @@ export function ReportsPage() {
         {/* Project Completion Rates */}
         <Card>
           <CardHeader>
-            <CardTitle>Project Completion Rates (%)</CardTitle>
+            <CardTitle>Subject Completion Rates (%)</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Calculated automatically from finished subtasks</p>
           </CardHeader>
           <CardContent className="h-64">
             {projectRatesData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={projectRatesData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                  <RechartsTooltip formatter={(val) => [`${val}%`, 'Completion']} />
-                  <Bar dataKey="rate" fill="#4F46E5" radius={[6, 6, 0, 0]} />
+                  <XAxis dataKey="name" tick={chartTick} stroke="#D2B48C" />
+                  <YAxis domain={[0, 100]} unit="%" tick={chartTick} stroke="#D2B48C" />
+                  <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} formatter={(val) => [`${val}%`, 'Completion']} />
+                  <Bar dataKey="rate" fill="#7B3F00" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -153,17 +182,17 @@ export function ReportsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Member Task Allocation & Completion</CardTitle>
-            <p className="text-xs text-slate-500 mt-1">Active vs Completed subtasks per team member</p>
+            <p className="text-xs text-slate-500 mt-1">Active vs completed tasks per member</p>
           </CardHeader>
           <CardContent className="h-64">
             {memberDistributionData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={memberDistributionData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <RechartsTooltip />
-                  <Bar dataKey="active" fill="#94A3B8" name="Active Tasks" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="completed" fill="#16A34A" name="Completed" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey="name" tick={chartTick} stroke="#D2B48C" />
+                  <YAxis tick={chartTick} stroke="#D2B48C" allowDecimals={false} />
+                  <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} />
+                  <Bar dataKey="active" fill="#D2B48C" name="Active Tasks" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="completed" fill="#73883F" name="Completed" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -177,18 +206,20 @@ export function ReportsPage() {
         {/* Velocity Trend */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>{timeframe === 'weekly' ? 'Weekly Sprint Velocity' : 'Monthly Delivery Velocity'}</CardTitle>
-            <p className="text-xs text-slate-500 mt-1">Task completions trend line over time</p>
+            <CardTitle>{timeframe === 'weekly' ? 'Weekly Throughput' : 'Monthly Throughput'}</CardTitle>
+            <p className="text-xs text-slate-500 mt-1">
+              Group tasks created vs completed, last 6 {timeframe === 'weekly' ? 'weeks' : 'months'}
+            </p>
           </CardHeader>
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={productivityTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <RechartsTooltip />
-                <Line type="monotone" dataKey="velocity" stroke="#4F46E5" strokeWidth={3} dot={{ r: 5 }} name="Velocity Index" />
-                <Line type="monotone" dataKey="completed" stroke="#16A34A" strokeWidth={2} dot={{ r: 4 }} name="Finished Tasks" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5D9C6" />
+                <XAxis dataKey="period" tick={chartTick} stroke="#D2B48C" />
+                <YAxis tick={chartTick} stroke="#D2B48C" allowDecimals={false} />
+                <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} />
+                <Line type="monotone" dataKey="created" stroke="#D2B48C" strokeWidth={2} dot={{ r: 4 }} name="Created" animationDuration={900} />
+                <Line type="monotone" dataKey="completed" stroke="#7B3F00" strokeWidth={3} dot={{ r: 5 }} name="Completed" animationDuration={900} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -199,7 +230,7 @@ export function ReportsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Individual Member Scorecard</CardTitle>
-          <p className="text-xs text-slate-500 mt-1">Detailed productivity breakdown per team member</p>
+          <p className="text-xs text-slate-500 mt-1">Detailed productivity per member</p>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">

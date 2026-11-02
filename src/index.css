@@ -2,27 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* TaskSync: Earthy & Minimalist. Color tokens live in tailwind.config.js. */
+
 @layer base {
   :root {
-    --background: 248 250 252;
-    --foreground: 15 23 42;
-    --card: 255 255 255;
-    --card-foreground: 15 23 42;
-    --primary: 79 70 229;
-    --primary-foreground: 255 255 255;
-    --border: 226 232 240;
-    --input: 226 232 240;
+    color-scheme: light;
+    --ts-brown: 123 63 0;
+    --ts-cream: 246 241 233;
+    --ts-beige: 210 180 140;
   }
 
   .dark {
-    --background: 2 6 23;
-    --foreground: 248 250 252;
-    --card: 15 23 42;
-    --card-foreground: 248 250 252;
-    --primary: 99 102 241;
-    --primary-foreground: 255 255 255;
-    --border: 30 41 59;
-    --input: 30 41 59;
+    color-scheme: dark;
   }
 
   * {
@@ -33,30 +24,73 @@
     @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  /* Native controls (checkboxes, radios, range) pick up the brand brown. */
+  input,
+  progress {
+    accent-color: #7B3F00;
+  }
+
+  ::selection {
+    background: rgba(210, 180, 140, 0.55);
+    color: #231C17;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(123, 63, 0, 0.55);
+    outline-offset: 2px;
+  }
+
+  /* Elements that draw their own focus ring. */
+  input:focus-visible,
+  textarea:focus-visible,
+  button[data-own-focus]:focus-visible {
+    outline: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      transition-duration: 1ms !important;
+    }
+  }
 }
 
-/* Custom Scrollbars */
+/* Older markup uses "animate-in fade-in zoom-in-95 slide-in-from-bottom-5";
+   map those to the design-system animations. */
+.animate-in {
+  animation: ts-pop-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.animate-in.slide-in-from-bottom-5 {
+  animation: ts-slide-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(154, 130, 104, 0.35);
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.6);
+  background: rgba(123, 63, 0, 0.45);
+  background-clip: padding-box;
 }
 
-/* Glassmorphism & Card Utilities */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(251, 248, 243, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 .dark .glass-panel {
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(35, 28, 23, 0.85);
 }

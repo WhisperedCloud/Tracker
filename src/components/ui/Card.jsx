@@ -1,13 +1,33 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export function Card({ className, children, ...props }) {
+// Base surface. Cards rise in gently when they appear; pass `index` to stagger
+// a row of cards, or `animate={false}` for cards that re-render often.
+// Clickable cards (onClick or `interactive`) lift on hover and warm their border.
+export function Card({ className, children, index = 0, animate = true, interactive, onClick, style, ...props }) {
+  const isInteractive = interactive ?? Boolean(onClick);
   return (
     <div
       className={cn(
-        'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl shadow-sm transition-all',
+        'relative bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm',
+        'transition-[transform,box-shadow,border-color] duration-200 ease-out',
+        animate && 'animate-rise',
+        isInteractive && [
+          'group/card cursor-pointer overflow-hidden',
+          'hover:-translate-y-0.5 hover:shadow-md hover:border-primary-300/70 dark:hover:border-primary-800',
+          'focus-visible:-translate-y-0.5 focus-visible:shadow-md',
+        ],
         className
       )}
+      style={animate && index ? { animationDelay: `${Math.min(index, 8) * 60}ms`, ...style } : style}
+      onClick={onClick}
+      tabIndex={isInteractive && onClick ? 0 : undefined}
+      onKeyDown={isInteractive && onClick ? (e) => {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onClick(e);
+        }
+      } : undefined}
       {...props}
     >
       {children}
@@ -17,7 +37,7 @@ export function Card({ className, children, ...props }) {
 
 export function CardHeader({ className, children, ...props }) {
   return (
-    <div className={cn('p-5 border-b border-slate-100 dark:border-slate-800/80', className)} {...props}>
+    <div className={cn('p-5 border-b border-slate-200/70 dark:border-slate-800/80', className)} {...props}>
       {children}
     </div>
   );
@@ -49,7 +69,7 @@ export function CardContent({ className, children, ...props }) {
 
 export function CardFooter({ className, children, ...props }) {
   return (
-    <div className={cn('p-5 pt-0 border-t border-slate-100 dark:border-slate-800/80 mt-auto', className)} {...props}>
+    <div className={cn('p-5 border-t border-slate-200/70 dark:border-slate-800/80 mt-auto', className)} {...props}>
       {children}
     </div>
   );

@@ -1,130 +1,118 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { INITIAL_NOTIFICATIONS } from '@/lib/mockData';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
+import { newId } from '@/lib/utils';
 import { useAuth } from './AuthContext';
 
 const NotificationContext = createContext();
 
 export function NotificationProvider({ children }) {
   const { user } = useAuth();
-  const [notifications, setNotifications] = useState(() => {
-    const saved = localStorage.getItem('tasksync_notifications');
-    if (saved) {
-      if (saved.includes('notif-1') || saved.includes('user-alex-1')) {
-        localStorage.removeItem('tasksync_notifications');
-        return [];
-      }
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse notifications", e);
-      }
-    }
-    return [];
-  });
-
+  const userId = user?.id;
+  const [notifications, setNotifications] = useState([]);
   const [toastNotification, setToastNotification] = useState(null);
+  const toastTimer = useRef(null);
+  // Ids already shown, so a notification we created ourselves is not
+  // toasted a second time when realtime echoes it back.
+  const seenIds = useRef(new Set());
 
-  useEffect(() => {
-    localStorage.setItem('tasksync_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  // Initial fetch of user's notifications from Supabase
-  useEffect(() => {
-    async function fetchUserNotifications() {
-      if (isSupabaseConfigured && supabase && user?.id) {
-        try {
-          const { data } = await supabase
-            .from('notifications')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false });
-          if (data) setNotifications(data);
-        } catch (err) {
-          console.warn("Could not fetch notifications:", err);
-        }
-      }
-    }
-    fetchUserNotifications();
-  }, [user?.id]);
-
-  // Supabase Realtime subscription for notifications
-  useEffect(() => {
-    if (isSupabaseConfigured && supabase && user?.id) {
-      const channel = supabase
-        .channel(`public:notifications:user_id=eq.${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'notifications',
-            filter: `user_id=eq.${user.id}`,
-          },
-          (payload) => {
-            setNotifications(prev => [payload.new, ...prev]);
-            showToast(payload.new);
-          }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [user?.id]);
-
-  const showToast = (notif) => {
+  const showToast = useCallback((notif) => {
     setToastNotification(notif);
-    setTimeout(() => {
-      setToastNotification(null);
-    }, 5000);
-  };
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastNotification(null), 5000);
+  }, []);
 
-  const addNotification = ({ title, message, type = 'info', related_task_id = null, userId = null }) => {
-    const targetUserId = userId || user?.id;
-    const newNotif = {
-      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      user_id: targetUserId,
+  // Toast-only error message; not stored in the database.
+  const notifyError = useCallback((message, title = 'Could not save') => {
+    showToast({ id: newId(), title, message, type: 'error' });
+  }, [showToast]);
+
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('Could not load notifications:', error.message);
+          return;
+        }
+        data.forEach(n => seenIds.current.add(n.id));
+        setNotifications(data);
+      });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    const channel = supabase
+      .channel(`notifications-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const notif = payload.new;
+          if (seenIds.current.has(notif.id)) return;
+          seenIds.current.add(notif.id);
+          setNotifications(prev => (prev.some(n => n.id === notif.id) ? prev : [notif, ...prev]));
+          showToast(notif);
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId, showToast]);
+
+  // Notifications for the current user appear right away. Notifications for
+  // other people are only saved; they arrive on the recipient's screen via realtime.
+  const addNotification = useCallback(async ({ title, message, type = 'info', related_task_id = null, userId: targetId = null }) => {
+    const recipient = targetId || userId;
+    if (!recipient) return;
+    const notif = {
+      id: newId(),
+      user_id: recipient,
       title,
       message,
       type,
       related_task_id,
       is_read: false,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
     };
 
-    setNotifications(prev => [newNotif, ...prev]);
-    showToast(newNotif);
-
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('notifications').insert(newNotif).then();
+    if (recipient === userId) {
+      seenIds.current.add(notif.id);
+      setNotifications(prev => [notif, ...prev]);
+      showToast(notif);
     }
+
+    const { error } = await supabase.from('notifications').insert(notif);
+    if (error) console.warn('Notification not saved:', error.message);
+  }, [userId, showToast]);
+
+  const markAsRead = async (id) => {
+    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, is_read: true } : n)));
+    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    if (error) console.warn('Could not mark notification read:', error.message);
   };
 
-  const markAsRead = (id) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, is_read: true } : n))
-    );
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('notifications').update({ is_read: true }).eq('id', id).then();
-    }
+  const markAllAsRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+    if (error) console.warn('Could not mark notifications read:', error.message);
   };
 
-  const markAllAsRead = () => {
-    setNotifications(prev =>
-      prev.map(n => ({ ...n, is_read: true }))
-    );
-    if (isSupabaseConfigured && supabase && user?.id) {
-      supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).then();
-    }
-  };
-
-  const deleteNotification = (id) => {
+  const deleteNotification = async (id) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('notifications').delete().eq('id', id).then();
-    }
+    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    if (error) console.warn('Could not delete notification:', error.message);
   };
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
@@ -136,10 +124,11 @@ export function NotificationProvider({ children }) {
         unreadCount,
         toastNotification,
         addNotification,
+        notifyError,
         markAsRead,
         markAllAsRead,
         deleteNotification,
-        clearToast: () => setToastNotification(null)
+        clearToast: () => setToastNotification(null),
       }}
     >
       {children}

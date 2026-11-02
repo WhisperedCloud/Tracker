@@ -23,6 +23,7 @@ import { Progress } from '@/components/ui/Progress';
 import { SmartWorkloadBalancer } from '@/components/tasks/SmartWorkloadBalancer';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
+import { useDialog } from '@/components/ui/DialogProvider';
 import {
   formatDate,
   formatTimeAgo,
@@ -46,10 +47,12 @@ export function ProjectDetails({
     comments,
     attachments,
     getProjectProgress,
-    deleteProject
+    deleteProject,
+    canManageProject
   } = useData();
 
-  const { user, role } = useAuth();
+  const { user } = useAuth();
+  const { confirm } = useDialog();
   const [showWorkloadView, setShowWorkloadView] = useState(false);
 
   const project = projects.find(p => p.id === projectId);
@@ -57,8 +60,8 @@ export function ProjectDetails({
   if (!project) {
     return (
       <div className="p-8 text-center">
-        <p className="text-slate-500">Project not found.</p>
-        <Button onClick={onBack} className="mt-4">Back to Projects</Button>
+        <p className="text-slate-500">Subject not found.</p>
+        <Button onClick={onBack} className="mt-4">Back to Subjects</Button>
       </div>
     );
   }
@@ -71,12 +74,12 @@ export function ProjectDetails({
   // Automatic Progress: (Completed Subtasks / Total Subtasks) * 100
   const progress = getProjectProgress(project.id);
   const completedSubtasks = subtasks.filter(t => t.status === 'Completed').length;
-  const isLeader = role === 'team_leader' || role === 'admin';
+  const isLeader = canManageProject(project);
 
   return (
     <div className="space-y-6">
       {/* Project Header Banner */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
+      <div className="bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-4">
             <button
@@ -119,12 +122,18 @@ export function ProjectDetails({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to delete this project and all its subtasks?")) {
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Delete this subject?',
+                    message: `"${project.name}" and all of its tasks and subtasks will be permanently deleted.`,
+                    confirmText: 'Delete subject',
+                  });
+                  if (ok) {
                     deleteProject(project.id);
                     onBack();
                   }
                 }}
+                aria-label="Delete subject"
                 className="text-rose-600 border-rose-200 hover:bg-rose-50 text-xs"
               >
                 <Trash2 className="w-4 h-4" />
@@ -145,7 +154,7 @@ export function ProjectDetails({
             </div>
             <Progress value={progress} barClassName="h-3" />
             <p className="text-[11px] text-slate-400">
-              Note: Project progress cannot be modified manually. It reflects real completed subtasks verified by team leaders.
+              Progress is worked out from completed tasks, so it always reflects real work.
             </p>
           </div>
 
@@ -159,7 +168,7 @@ export function ProjectDetails({
               className="text-primary-600 dark:text-primary-400 font-semibold hover:underline flex items-center gap-1"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              {showWorkloadView ? "Hide Workload" : "Team Workload"}
+              {showWorkloadView ? "Hide Workload" : "Group Workload"}
             </button>
           </div>
         </div>
@@ -172,7 +181,7 @@ export function ProjectDetails({
             <div>
               <CardTitle className="text-base flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-primary-600" />
-                Team Capacity Matrix for {team.name}
+                Who is doing what in {team.name}
               </CardTitle>
               <p className="text-xs text-slate-500 mt-0.5">
                 Inspect member availability before breaking down tasks and assigning new work.
@@ -253,7 +262,7 @@ export function ProjectDetails({
                       <div
                         key={subtask.id}
                         onClick={() => onOpenTaskDetails(subtask.id)}
-                        className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-400 hover:shadow-xs transition-all cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3"
+                        className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-slate-900 hover:border-primary-400 hover:shadow-xs transition-all cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3"
                       >
                         <div className="flex items-start gap-3">
                           <div className="mt-0.5">
@@ -312,10 +321,10 @@ export function ProjectDetails({
             );
           })
         ) : (
-          <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="p-8 text-center bg-surface dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
             <Layers className="w-8 h-8 text-slate-400 mx-auto mb-2" />
             <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">No tasks created yet</h4>
-            <p className="text-xs text-slate-500 mt-1">Start breaking this project down into manageable subtasks for team members.</p>
+            <p className="text-xs text-slate-500 mt-1">Break this subject into study tasks for the group.</p>
             <Button
               size="sm"
               onClick={() => onOpenCreateSubtask(null, project.id, team?.id)}

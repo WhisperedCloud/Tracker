@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Users2, ArrowRight, Shield, FolderKanban, Sparkles } from 'lucide-react';
+import { Plus, Users2, ArrowRight, Mail } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -8,26 +8,75 @@ import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 
 export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
-  const { teams, teamMembers, projects, tasks, profiles } = useData();
-  const { user, role } = useAuth();
+  const { teams, teamMembers, projects, tasks, profiles, myPendingInvitations, acceptInvitation, declineInvitation } = useData();
+  const { user } = useAuth();
+  const [busyInviteId, setBusyInviteId] = useState(null);
+
+  const handleAccept = async (inv) => {
+    setBusyInviteId(inv.id);
+    await acceptInvitation(inv);
+    setBusyInviteId(null);
+  };
+
+  const handleDecline = async (inv) => {
+    setBusyInviteId(inv.id);
+    await declineInvitation(inv);
+    setBusyInviteId(null);
+  };
 
   return (
     <div className="space-y-6">
+      {myPendingInvitations.length > 0 && (
+        <Card className="border-primary-200 dark:border-primary-900 bg-primary-50/40 dark:bg-primary-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Mail className="w-4 h-4 text-primary-600" />
+              Team invitations for you
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {myPendingInvitations.map((inv) => {
+              const inviter = profiles.find(p => p.id === inv.invited_by);
+              const busy = busyInviteId === inv.id;
+              return (
+                <div
+                  key={inv.id}
+                  className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                >
+                  <p className="text-xs text-slate-700 dark:text-slate-300">
+                    <strong>{inviter?.full_name || 'A group member'}</strong> invited you to join{' '}
+                    <strong>{inv.team_name || 'a study group'}</strong> as {inv.role === 'leader' ? 'an organizer' : 'a member'}.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={() => handleAccept(inv)} disabled={busy} className="text-xs">
+                      {busy ? 'Working...' : 'Accept'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => handleDecline(inv)} disabled={busy} className="text-xs">
+                      Decline
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-            My Teams & Workspaces
+            My Study Groups
             <Badge variant="primary">{teams.length}</Badge>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Collaborative team hubs for distributing projects, subtasks, and tracking velocity.
+            Groups you study with: shared subjects, tasks, sessions, notes and questions.
           </p>
         </div>
 
-        {(role === 'team_leader' || role === 'admin') && (
+        {(
           <Button onClick={onOpenCreateTeam} className="gap-1.5 shadow-sm">
             <Plus className="w-4 h-4" />
-            Create Team
+            Create Study Group
           </Button>
         )}
       </div>
@@ -35,22 +84,20 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
       {teams.length === 0 ? (
         <Card className="p-12 text-center">
           <Users2 className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">No teams created yet</h3>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">No study groups yet</h3>
           <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            {role === 'team_leader' || role === 'admin'
-              ? "Create a collaborative team workspace to invite teammates, share projects, and assign subtasks."
-              : "You haven't been added to any team workspace yet."}
+            Create a study group to invite classmates, add subjects and study together, or ask a friend to invite you.
           </p>
-          {(role === 'team_leader' || role === 'admin') && (
+          {(
             <Button onClick={onOpenCreateTeam} className="mt-4 gap-1.5 text-xs shadow-sm">
               <Plus className="w-4 h-4" />
-              Create First Team
+              Create First Study Group
             </Button>
           )}
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {teams.map((team) => {
+          {teams.map((team, i) => {
             const members = teamMembers.filter(tm => tm.team_id === team.id);
             const teamProjects = projects.filter(p => p.team_id === team.id);
             const teamTasks = tasks.filter(t => t.team_id === team.id);
@@ -60,6 +107,7 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
 
             return (
               <Card
+                index={i}
                 key={team.id}
                 className="flex flex-col hover:border-primary-400/80 hover:shadow-md transition-all group cursor-pointer"
                 onClick={() => onSelectTeam(team.id)}
@@ -73,7 +121,7 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
                       </CardTitle>
                       {myMembership && (
                         <span className="text-[10px] font-semibold text-primary-600 dark:text-primary-400 capitalize">
-                          {myMembership.role}
+                          {myMembership.role === 'member' ? 'Member' : 'Organizer'}
                         </span>
                       )}
                     </div>
@@ -82,7 +130,7 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
 
                 <CardContent className="space-y-4 flex-1 flex flex-col justify-between">
                   <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                    {team.description || "Active collaboration workspace for projects and subtask management."}
+                    {team.description || "A study group for sharing tasks, sessions and notes."}
                   </p>
 
                   {/* Team Quick Stats */}
@@ -93,7 +141,7 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
                     </div>
                     <div>
                       <span className="block text-xs font-bold text-slate-900 dark:text-white">{teamProjects.length}</span>
-                      <span className="text-[10px] text-slate-400">Projects</span>
+                      <span className="text-[10px] text-slate-400">Subjects</span>
                     </div>
                     <div>
                       <span className="block text-xs font-bold text-emerald-600 dark:text-emerald-400">{completionRate}%</span>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BrandLogo } from '@/components/ui/Brand';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { CheckCircle2, ArrowLeft, Mail } from 'lucide-react';
@@ -29,9 +30,7 @@ export function ForgotPassword({ onNavigateLogin }) {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-500/30">
-            <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
-          </div>
+          <BrandLogo className="mb-2" />
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
             Reset Password
           </h1>
@@ -40,7 +39,7 @@ export function ForgotPassword({ onNavigateLogin }) {
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-5">
+        <div className="bg-surface dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-5">
           {submitted ? (
             <div className="text-center space-y-4">
               <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400 mx-auto flex items-center justify-center">

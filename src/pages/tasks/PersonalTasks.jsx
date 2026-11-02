@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { ListTodo, Hourglass, TrendingUp } from 'lucide-react';
+import { StatCard } from '@/components/ui/StatCard';
 import {
   Plus,
   CheckCircle2,
@@ -140,7 +142,7 @@ export function PersonalTasks() {
             <Badge variant="primary">{personalTasks.length}</Badge>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Organize everyday personal tasks, prioritize schedules, and achieve daily goals.
+            Your own study to-dos, revision plans and reminders. Only you can see these.
           </p>
         </div>
 
@@ -151,37 +153,16 @@ export function PersonalTasks() {
       </div>
 
       {/* Daily Productivity Summary Card */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Tasks</span>
-          <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">{totalTasks}</p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Completed</span>
-          <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{completedTasks}</p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Pending</span>
-          <p className="text-xl font-bold text-amber-600 dark:text-amber-400 mt-1">{pendingTasks}</p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 uppercase tracking-wider">Overdue</span>
-          <p className={cn("text-xl font-bold mt-1", overdueTasks > 0 ? "text-rose-600" : "text-slate-800 dark:text-slate-200")}>
-            {overdueTasks}
-          </p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 col-span-2 sm:col-span-1">
-          <span className="text-[11px] font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wider">Productivity</span>
-          <p className="text-xl font-bold text-primary-600 dark:text-primary-400 mt-1">{completionPercentage}%</p>
-        </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <StatCard index={0} label="Total Tasks" value={totalTasks} icon={ListTodo} tone="neutral" />
+        <StatCard index={1} label="Completed" value={completedTasks} icon={CheckCircle2} tone="moss" />
+        <StatCard index={2} label="Pending" value={pendingTasks} icon={Hourglass} tone="ochre" />
+        <StatCard index={3} label="Overdue" value={overdueTasks} icon={AlertTriangle} tone={overdueTasks > 0 ? 'terracotta' : 'neutral'} />
+        <StatCard index={4} label="Productivity" value={completionPercentage} suffix="%" icon={TrendingUp} tone="brown" progress={completionPercentage} className="col-span-2 sm:col-span-1" />
       </div>
 
       {/* Control Bar: View Switcher, Search & Filters */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-surface dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
         {/* View Switcher: List, Kanban, Calendar */}
         <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
           <button
@@ -189,7 +170,7 @@ export function PersonalTasks() {
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
               viewMode === 'list'
-                ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
+                ? 'bg-surface dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             )}
           >
@@ -201,7 +182,7 @@ export function PersonalTasks() {
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
               viewMode === 'kanban'
-                ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
+                ? 'bg-surface dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             )}
           >
@@ -213,7 +194,7 @@ export function PersonalTasks() {
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
               viewMode === 'calendar'
-                ? 'bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
+                ? 'bg-surface dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             )}
           >
@@ -235,33 +216,33 @@ export function PersonalTasks() {
             />
           </div>
 
-          <select
+          <Select size="sm" aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+            className="w-auto min-w-[8.5rem]"
           >
             <option value="all">All Statuses</option>
             <option value="To Do">To Do</option>
             <option value="In Progress">In Progress</option>
             <option value="Completed">Completed</option>
-          </select>
+          </Select>
 
-          <select
+          <Select size="sm" aria-label="Filter by priority"
             value={priorityFilter}
             onChange={(e) => setPriorityFilter(e.target.value)}
-            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+            className="w-auto min-w-[8.5rem]"
           >
             <option value="all">All Priorities</option>
             <option value="Low">Low</option>
             <option value="Medium">Medium</option>
             <option value="High">High</option>
             <option value="Urgent">Urgent</option>
-          </select>
+          </Select>
 
-          <select
+          <Select size="sm" aria-label="Filter by category"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+            className="w-auto min-w-[8.5rem]"
           >
             <option value="all">All Categories</option>
             <option value="Work">Work</option>
@@ -269,7 +250,7 @@ export function PersonalTasks() {
             <option value="Learning">Learning</option>
             <option value="Finance">Finance</option>
             <option value="General">General</option>
-          </select>
+          </Select>
         </div>
       </div>
 
@@ -277,7 +258,7 @@ export function PersonalTasks() {
       {viewMode === 'list' && (
         <div className="space-y-2">
           {filteredTasks.length === 0 ? (
-            <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <div className="p-12 text-center bg-surface dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
               <p className="text-sm text-slate-400">No personal tasks found.</p>
               <Button size="sm" onClick={handleOpenCreate} className="mt-3">
                 Create your first task
@@ -292,7 +273,7 @@ export function PersonalTasks() {
                 <div
                   key={t.id}
                   className={cn(
-                    'p-4 rounded-xl border bg-white dark:bg-slate-900 flex items-center justify-between gap-4 transition-all hover:shadow-xs group',
+                    'p-4 rounded-xl border bg-surface dark:bg-slate-900 flex items-center justify-between gap-4 transition-all hover:shadow-xs group',
                     isCompleted
                       ? 'border-slate-200/60 dark:border-slate-800/60 opacity-70'
                       : 'border-slate-200 dark:border-slate-800'
@@ -389,7 +370,7 @@ export function PersonalTasks() {
                     columnTasks.map((t) => (
                       <div
                         key={t.id}
-                        className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-2.5"
+                        className="p-3.5 rounded-xl bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-2.5"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
@@ -425,7 +406,7 @@ export function PersonalTasks() {
 
       {/* VIEW 3: CALENDAR VIEW */}
       {viewMode === 'calendar' && (
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+        <div className="bg-surface dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
             <h3 className="font-bold text-sm text-slate-900 dark:text-white">November 2026 Deadlines</h3>
             <span className="text-xs text-slate-500">Visual Timeline View</span>
@@ -490,7 +471,7 @@ export function PersonalTasks() {
               placeholder="Task details and notes..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+              className="w-full px-3.5 py-2 text-sm bg-surface dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
             />
           </div>
 

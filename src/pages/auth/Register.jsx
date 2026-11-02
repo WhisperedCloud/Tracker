@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BrandLogo } from '@/components/ui/Brand';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -20,7 +21,6 @@ export function Register({ onNavigateLogin }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('team_member');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -35,9 +35,13 @@ export function Register({ onNavigateLogin }) {
     setError('');
     setLoading(true);
     try {
-      const data = await signup(fullName, email, password, role);
-      setRegisteredEmail(email);
-      setVerificationSent(true);
+      const data = await signup(fullName, email, password);
+      // With email confirmation turned off, Supabase signs the user in right
+      // away and the app switches to the workspace on its own.
+      if (!data?.session) {
+        setRegisteredEmail(email);
+        setVerificationSent(true);
+      }
     } catch (err) {
       setError(err.message || 'Failed to sign up.');
     } finally {
@@ -76,7 +80,7 @@ export function Register({ onNavigateLogin }) {
             </p>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-5">
+          <div className="bg-surface dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-5">
             {/* Alert box */}
             <div className="p-4 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 space-y-2">
               <div className="flex items-center gap-2 font-bold text-emerald-800 dark:text-emerald-300">
@@ -134,18 +138,16 @@ export function Register({ onNavigateLogin }) {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-500/30">
-            <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
-          </div>
+          <BrandLogo className="mb-2" />
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-            Create your TaskSync account
+            Create your account
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Personal productivity + collaborative team execution
+            Plan, share and study together with your classmates.
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-5">
+        <div className="bg-surface dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-5">
           {error && (
             <div className="p-3 text-xs text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -180,16 +182,6 @@ export function Register({ onNavigateLogin }) {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-
-            <Select
-              label="Choose Your Role"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            >
-              <option value="team_member">Team Member (Personal tasks & team assignments)</option>
-              <option value="team_leader">Team Leader (Manage projects, assign tasks & review)</option>
-              <option value="admin">Admin (Full platform management & access control)</option>
-            </Select>
 
             <Button type="submit" className="w-full mt-2" disabled={loading}>
               {loading ? "Creating Account..." : "Create Account"}

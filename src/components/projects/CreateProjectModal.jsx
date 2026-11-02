@@ -6,17 +6,19 @@ import { Select } from '@/components/ui/Select';
 import { useData } from '@/context/DataContext';
 
 export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
-  const { teams, createProject } = useData();
+  // Any group you belong to can get a new subject.
+  const { memberTeams: teams, createProject } = useData();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [teamId, setTeamId] = useState('');
   const [priority, setPriority] = useState('Medium');
   const [status, setStatus] = useState('Planning');
-  const [category, setCategory] = useState('Development');
+  const [category, setCategory] = useState('Course');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -25,25 +27,32 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
       setTeamId(initialTeamId || (teams[0] ? teams[0].id : ''));
       setPriority('Medium');
       setStatus('Planning');
-      setCategory('Development');
+      setCategory('Course');
       setStartDate(new Date().toISOString().split('T')[0]);
       setDueDate('');
       setError('');
     }
-  }, [isOpen, initialTeamId, teams]);
+    // Reset only when the modal opens.
+  }, [isOpen, initialTeamId]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Project name is required.');
+      setError('Subject name is required.');
       return;
     }
     if (!teamId) {
-      setError('Please select a team.');
+      setError('Please choose a study group.');
       return;
     }
 
-    createProject({
+    if (dueDate && startDate && dueDate < startDate) {
+      setError('The deadline cannot be before the start date.');
+      return;
+    }
+
+    setSaving(true);
+    const created = await createProject({
       name: name.trim(),
       description: description.trim(),
       team_id: teamId,
@@ -53,16 +62,18 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
       start_date: startDate,
       due_date: dueDate
     });
+    setSaving(false);
 
-    onClose();
+    if (created) onClose();
+    else setError('The subject could not be saved. Check the message in the corner and try again.');
   };
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Create New Project"
-      description="Allocate a new initiative to a team and set target milestones."
+      title="Add a Subject"
+      description="Add a course, exam or assignment for the group to work on."
       size="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -73,7 +84,7 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
         )}
 
         <Input
-          label="Project Name *"
+          label="Subject Name *"
           placeholder="e.g. Develop an E-commerce Website"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -89,13 +100,13 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
             placeholder="Outline goals, architecture, deliverables, and requirements..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3.5 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+            className="w-full px-3.5 py-2 text-sm bg-surface dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
           />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Select
-            label="Assigned Team *"
+            label="Study Group *"
             value={teamId}
             onChange={(e) => setTeamId(e.target.value)}
           >
@@ -111,11 +122,12 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           >
-            <option value="Development">Development</option>
-            <option value="Design">Design & UX</option>
-            <option value="Marketing">Marketing</option>
-            <option value="Research">Research & Strategy</option>
-            <option value="Infrastructure">Infrastructure</option>
+            <option value="Course">Course</option>
+            <option value="Exam Prep">Exam Prep</option>
+            <option value="Assignment">Assignment</option>
+            <option value="Project">Project</option>
+            <option value="Revision">Revision</option>
+            <option value="Research">Research</option>
           </Select>
         </div>
 
@@ -165,8 +177,8 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit">
-            Create Project
+          <Button type="submit" disabled={saving || teams.length === 0}>
+            {saving ? 'Saving...' : 'Add Subject'}
           </Button>
         </div>
       </form>

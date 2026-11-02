@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+import { CalendarClock, Timer, Flame } from 'lucide-react';
+import { SessionCard } from '@/pages/study/StudySessionsPage';
+import { useStudy, formatMinutes } from '@/context/StudyContext';
+import { StatCard } from '@/components/ui/StatCard';
+import { chartTooltipStyle, chartTick, chartCursor } from '@/lib/chartTheme';
+import { Select } from '@/components/ui/Select';
 import {
   FolderKanban,
   Users2,
@@ -49,7 +55,7 @@ export function MainDashboard({
   onOpenNewProjectModal,
   setCurrentTab,
 }) {
-  const { user, role } = useAuth();
+  const { user } = useAuth();
   const {
     teams,
     projects,
@@ -62,9 +68,13 @@ export function MainDashboard({
     getMemberWorkload,
     getTeamStats,
     updateTask,
-    approveTaskReview
+    approveTaskReview,
+    submitTaskForReview,
+    canManageTask,
+    memberTeams
   } = useData();
 
+  const { upcomingSessions, minutesToday, minutesThisWeek, streakDays, timer } = useStudy();
   const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('all');
 
@@ -85,8 +95,9 @@ export function MainDashboard({
     ? Math.round((myCompleted.length / myAssignedTasks.length) * 100)
     : 100;
 
-  // Pending task approvals for leader / admin
-  const pendingApprovals = tasks.filter((t) => t.status === 'Under Review');
+  // Tasks waiting for this user's review (they created them or lead the group)
+  const pendingApprovals = tasks.filter((t) => t.status === 'Under Review' && canManageTask(t) && t.assigned_to !== user?.id);
+  const canCreateProjects = memberTeams.length > 0;
 
   // Chart Data: Task Status Breakdown
   const statusCounts = {
@@ -98,11 +109,11 @@ export function MainDashboard({
   };
 
   const statusPieData = [
-    { name: 'To Do', value: statusCounts['To Do'], color: '#94a3b8' },
-    { name: 'In Progress', value: statusCounts['In Progress'], color: '#6366f1' },
-    { name: 'Under Review', value: statusCounts['Under Review'], color: '#a855f7' },
-    { name: 'Completed', value: statusCounts['Completed'], color: '#22c55e' },
-    { name: 'Blocked/Changes', value: statusCounts['Blocked'], color: '#f43f5e' },
+    { name: 'To Do', value: statusCounts['To Do'], color: '#D2B48C' },
+    { name: 'In Progress', value: statusCounts['In Progress'], color: '#507671' },
+    { name: 'Under Review', value: statusCounts['Under Review'], color: '#8A5A69' },
+    { name: 'Completed', value: statusCounts['Completed'], color: '#73883F' },
+    { name: 'Blocked/Changes', value: statusCounts['Blocked'], color: '#B04E35' },
   ].filter(d => d.value > 0);
 
   // Chart Data: Project Progress
@@ -114,20 +125,20 @@ export function MainDashboard({
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-primary-700 via-primary-600 to-indigo-800 p-6 sm:p-8 text-white shadow-xl shadow-primary-500/10">
+      <div className="relative overflow-hidden rounded-2xl bg-primary-700 p-6 sm:p-8 text-cream shadow-md">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-md">
-                {role === 'admin' ? 'Platform Administrator' : role === 'team_leader' ? 'Team Leader Workspace' : 'Personal & Team Hub'}
+              <span className="text-xs uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-cream/15 border border-cream/20">
+                Your Study Hub
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               Welcome back, {user?.full_name}! 👋
             </h1>
-            <p className="text-sm text-primary-100 max-w-xl">
-              {role === 'team_leader'
-                ? `You have ${pendingApprovals.length} task(s) awaiting your review and ${stats.activeProjectsCount} active team projects in progress.`
+            <p className="text-sm text-primary-100/90 max-w-xl">
+              {pendingApprovals.length > 0
+                ? `You have ${pendingApprovals.length} task(s) awaiting your review and ${stats.activeProjectsCount} active subjects in your groups.`
                 : `You've achieved ${myProductivityPercentage}% productivity with ${myCompleted.length} of ${myAssignedTasks.length} tasks completed.`}
             </p>
           </div>
@@ -135,18 +146,18 @@ export function MainDashboard({
           <div className="flex items-center gap-3 shrink-0">
             <Button
               onClick={onOpenNewTaskModal}
-              className="bg-white text-primary-700 hover:bg-primary-50 shadow-md font-semibold"
+              className="bg-cream text-primary-800 hover:bg-white shadow-sm font-semibold"
             >
               <Plus className="w-4 h-4" />
-              Assign New Task
+              {canCreateProjects ? 'Assign New Task' : 'New Task'}
             </Button>
-            {(role === 'team_leader' || role === 'admin') && (
+            {canCreateProjects && (
               <Button
                 variant="outline"
                 onClick={onOpenNewProjectModal}
-                className="bg-primary-800/60 border-primary-400/40 text-white hover:bg-primary-800"
+                className="bg-transparent border-cream/40 text-cream hover:bg-primary-800 hover:border-cream/60"
               >
-                Create Project
+                Add Subject
               </Button>
             )}
           </div>
@@ -155,55 +166,62 @@ export function MainDashboard({
 
       {/* Metrics Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-4 sm:p-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Projects</p>
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{stats.activeProjectsCount}</h3>
-            <span className="text-[11px] text-slate-400 mt-1 block">{stats.totalProjectsCount} total initiatives</span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-950/60 dark:text-primary-400 flex items-center justify-center">
-            <FolderKanban className="w-6 h-6" />
-          </div>
+        <StatCard index={0} label="Active Subjects" value={stats.activeProjectsCount} hint={`${stats.totalProjectsCount} total initiatives`} icon={FolderKanban} tone="brown" />
+        <StatCard index={1} label="Group Completion" value={stats.completionPercentage} suffix="%" hint={`${stats.completedCount} of ${stats.totalTasksCount} completed`} icon={CheckCircle2} tone="moss" progress={stats.completionPercentage} />
+        <StatCard index={2} label="In Progress" value={stats.inProgressCount} hint={`${stats.underReviewCount} under review`} icon={Clock} tone="teal" />
+        <StatCard index={3} label="Overdue Tasks" value={stats.overdueCount} hint={stats.overdueCount > 0 ? 'Needs attention' : 'All on schedule'} icon={AlertTriangle} tone={stats.overdueCount > 0 ? 'terracotta' : 'neutral'} />
+      </div>
+
+      {/* Group study: next sessions and today's study time */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-2" index={4}>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2"><CalendarClock className="w-4 h-4 text-primary-600" />Upcoming study sessions</CardTitle>
+              <p className="text-xs text-slate-500 mt-0.5">Your groups' next sessions</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setCurrentTab('sessions')}>View all</Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {upcomingSessions.length === 0 ? (
+              <div className="text-center py-6">
+                <p className="text-xs text-slate-500">No sessions planned yet.</p>
+                <Button size="sm" className="mt-3" onClick={() => setCurrentTab('sessions')}>Schedule a session</Button>
+              </div>
+            ) : upcomingSessions.slice(0, 3).map((s, i) => <SessionCard key={s.id} session={s} index={i} onEdit={() => setCurrentTab('sessions')} />)}
+          </CardContent>
         </Card>
 
-        <Card className="p-4 sm:p-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Team Completion</p>
-            <h3 className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{stats.completionPercentage}%</h3>
-            <span className="text-[11px] text-slate-400 mt-1 block">{stats.completedCount} of {stats.totalTasksCount} completed</span>
+        <Card index={5} className="p-5 flex flex-col">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2"><Timer className="w-4 h-4 text-primary-600" />Your study time</h3>
+            {streakDays > 0 && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+                <Flame className="w-3 h-3" />{streakDays}-day streak
+              </span>
+            )}
           </div>
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400 flex items-center justify-center">
-            <CheckCircle2 className="w-6 h-6" />
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Today</p>
+              <p className="text-xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums">{formatMinutes(minutesToday)}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">This week</p>
+              <p className="text-xl font-bold text-slate-900 dark:text-white mt-1 tabular-nums">{formatMinutes(minutesThisWeek)}</p>
+            </div>
           </div>
-        </Card>
-
-        <Card className="p-4 sm:p-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">In Progress</p>
-            <h3 className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">{stats.inProgressCount}</h3>
-            <span className="text-[11px] text-slate-400 mt-1 block">{stats.underReviewCount} under review</span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400 flex items-center justify-center">
-            <Clock className="w-6 h-6" />
-          </div>
-        </Card>
-
-        <Card className="p-4 sm:p-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Overdue Tasks</p>
-            <h3 className={cn("text-2xl font-bold mt-1", stats.overdueCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-800 dark:text-slate-200")}>
-              {stats.overdueCount}
-            </h3>
-            <span className="text-[11px] text-slate-400 mt-1 block">Requires attention</span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400 flex items-center justify-center">
-            <AlertTriangle className="w-6 h-6" />
-          </div>
+          <p className="text-xs text-slate-500 mt-4 leading-relaxed">
+            {timer.status === 'idle' ? 'Start a focus block and it is added to your study hours when it ends.' : `Your ${timer.phase} timer is running.`}
+          </p>
+          <Button className="mt-auto pt-0" onClick={() => setCurrentTab('focus')}>
+            <Timer className="w-4 h-4" />{timer.status === 'idle' ? 'Start focusing' : 'Open timer'}
+          </Button>
         </Card>
       </div>
 
-      {/* Pending Approvals Review Section (High priority for Team Leaders) */}
-      {(role === 'team_leader' || role === 'admin') && pendingApprovals.length > 0 && (
+      {/* Pending Approvals Review Section (tasks you created or organize) */}
+      {pendingApprovals.length > 0 && (
         <Card className="border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <div>
@@ -212,7 +230,7 @@ export function MainDashboard({
                 Pending Task Reviews ({pendingApprovals.length})
               </CardTitle>
               <p className="text-xs text-purple-700/80 dark:text-purple-300 mt-0.5">
-                Tasks submitted by team members waiting for leader verification & sign-off.
+                Work submitted by your group, waiting for you to approve it or ask for changes.
               </p>
             </div>
           </CardHeader>
@@ -222,7 +240,7 @@ export function MainDashboard({
               return (
                 <div
                   key={task.id}
-                  className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-purple-200/80 dark:border-purple-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+                  className="p-3 bg-surface dark:bg-slate-900 rounded-xl border border-purple-200/80 dark:border-purple-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
                 >
                   <div className="flex items-center gap-3">
                     <Avatar src={assignee?.avatar_url} name={assignee?.full_name} size="sm" />
@@ -268,7 +286,7 @@ export function MainDashboard({
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle>Project Execution Progress</CardTitle>
+              <CardTitle>Subject Progress</CardTitle>
               <p className="text-xs text-slate-500 mt-1">Automatic progress calculated from completed subtasks</p>
             </div>
             <span className="text-xs font-semibold text-primary-600 dark:text-primary-400">Formula: (Done / Total) &times; 100</span>
@@ -277,10 +295,10 @@ export function MainDashboard({
             {projectProgressData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={projectProgressData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                  <RechartsTooltip formatter={(val) => [`${val}%`, 'Progress']} />
-                  <Bar dataKey="progress" fill="#4F46E5" radius={[6, 6, 0, 0]} />
+                  <XAxis dataKey="name" tick={chartTick} stroke="#D2B48C" />
+                  <YAxis domain={[0, 100]} unit="%" tick={chartTick} stroke="#D2B48C" />
+                  <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} formatter={(val) => [`${val}%`, 'Progress']} />
+                  <Bar dataKey="progress" fill="#7B3F00" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -312,7 +330,7 @@ export function MainDashboard({
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
-                  <RechartsTooltip />
+                  <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -337,26 +355,26 @@ export function MainDashboard({
       <Card>
         <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <CardTitle>Assigned Team Tasks</CardTitle>
+            <CardTitle>Group Tasks</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Quick action to update task status without opening full modal</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <select
+            <Select size="sm" aria-label="Filter by study group"
               value={selectedTeamFilter}
               onChange={(e) => setSelectedTeamFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+              className="w-auto min-w-[8.5rem]"
             >
-              <option value="all">All Teams</option>
+              <option value="all">All Study Groups</option>
               {teams.map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
-            </select>
+            </Select>
 
-            <select
+            <Select size="sm" aria-label="Filter by status"
               value={selectedStatusFilter}
               onChange={(e) => setSelectedStatusFilter(e.target.value)}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+              className="w-auto min-w-[8.5rem]"
             >
               <option value="all">All Statuses</option>
               <option value="To Do">To Do</option>
@@ -364,7 +382,7 @@ export function MainDashboard({
               <option value="Under Review">Under Review</option>
               <option value="Changes Requested">Changes Requested</option>
               <option value="Completed">Completed</option>
-            </select>
+            </Select>
           </div>
         </CardHeader>
 
@@ -373,7 +391,7 @@ export function MainDashboard({
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                 <th className="py-3 px-4">Task Name</th>
-                <th className="py-3 px-4">Project</th>
+                <th className="py-3 px-4">Subject</th>
                 <th className="py-3 px-4">Assignee</th>
                 <th className="py-3 px-4">Priority</th>
                 <th className="py-3 px-4">Due Date</th>
@@ -427,11 +445,11 @@ export function MainDashboard({
                       </td>
                       <td className="py-3.5 px-4">
                         {/* Quick Action Status Selector with role-based restriction */}
-                        {role === 'team_leader' || role === 'admin' ? (
-                          <select
+                        {canManageTask(task) ? (
+                          <Select size="sm" aria-label="Task status"
                             value={task.status}
                             onChange={(e) => updateTask(task.id, { status: e.target.value })}
-                            className="text-xs p-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium"
+                            className="w-auto min-w-[8.5rem]"
                           >
                             <option value="To Do">To Do</option>
                             <option value="In Progress">In Progress</option>
@@ -439,18 +457,26 @@ export function MainDashboard({
                             <option value="Changes Requested">Changes Requested</option>
                             <option value="Completed">Completed</option>
                             <option value="Blocked">Blocked</option>
-                          </select>
+                          </Select>
                         ) : task.assigned_to === user?.id ? (
-                          <select
+                          <Select size="sm" aria-label="Task status"
                             value={task.status}
-                            onChange={(e) => updateTask(task.id, { status: e.target.value })}
-                            className="text-xs p-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-medium"
+                            onChange={(e) => (
+                              e.target.value === 'Under Review'
+                                ? submitTaskForReview(task.id)
+                                : updateTask(task.id, { status: e.target.value })
+                            )}
+                            className="w-auto min-w-[8.5rem]"
                           >
+                            {/* Keep the current value selectable even if members cannot set it */}
+                            {['Changes Requested', 'Completed'].includes(task.status) && (
+                              <option value={task.status} disabled>{task.status}</option>
+                            )}
                             <option value="To Do">To Do</option>
                             <option value="In Progress">In Progress</option>
                             <option value="Under Review">Submit for Review</option>
                             <option value="Blocked">Blocked</option>
-                          </select>
+                          </Select>
                         ) : (
                           <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', getStatusBadgeColor(task.status))}>
                             {task.status}

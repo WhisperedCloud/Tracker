@@ -1,211 +1,271 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import {
-  INITIAL_PROFILES,
-  INITIAL_TEAMS,
-  INITIAL_TEAM_MEMBERS,
-  INITIAL_PROJECTS,
-  INITIAL_TASKS,
-  INITIAL_PERSONAL_TASKS,
-  INITIAL_COMMENTS,
-  INITIAL_ATTACHMENTS,
-  INITIAL_ACTIVITY,
-} from '@/lib/mockData';
-import { isOverdue, getWorkloadLevel } from '@/lib/utils';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import confetti from 'canvas-confetti';
+import { supabase } from '@/lib/supabase';
+import { isOverdue, getWorkloadLevel, newId, emptyToNull } from '@/lib/utils';
+import { sendEmail } from '@/lib/email';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './NotificationContext';
-import confetti from 'canvas-confetti';
 
 const DataContext = createContext();
 
+export const ATTACHMENTS_BUCKET = 'task-attachments';
+const LEADER_ROLES = ['leader', 'admin'];
+const DATE_FIELDS = ['start_date', 'due_date', 'reminder_date'];
+
+const nowIso = () => new Date().toISOString();
+
+const upsertById = (list, row) =>
+  list.some(r => r.id === row.id)
+    ? list.map(r => (r.id === row.id ? { ...r, ...row } : r))
+    : [row, ...list];
+
+const removeById = (list, id) => list.filter(r => r.id !== id);
+
+// Blank date inputs must be saved as NULL.
+const cleanDates = (record) => {
+  const out = { ...record };
+  DATE_FIELDS.forEach((field) => {
+    if (field in out) out[field] = emptyToNull(out[field]);
+  });
+  return out;
+};
+
+// Ids of a task and every subtask nested under it.
+const collectTaskTree = (tasks, rootId) => {
+  const ids = new Set([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    tasks.forEach((t) => {
+      if (t.parent_task_id && ids.has(t.parent_task_id) && !ids.has(t.id)) {
+        ids.add(t.id);
+        grew = true;
+      }
+    });
+  }
+  return ids;
+};
+
 export function DataProvider({ children }) {
   const { user } = useAuth();
-  const { addNotification } = useNotifications();
+  const { addNotification, notifyError } = useNotifications();
+  const userId = user?.id;
 
-  const cleanCache = (key) => {
-    const saved = localStorage.getItem(key);
-    if (!saved) return [];
-    if (saved.includes('user-alex-1') || saved.includes('task-parent-1') || saved.includes('proj-ecommerce-1') || saved.includes('pt-1') || saved.includes('Prepare Sprint Review')) {
-      localStorage.removeItem(key);
-      return [];
-    }
-    try {
-      return JSON.parse(saved);
-    } catch {
-      return [];
-    }
-  };
-
-  // 1. Data States with LocalStorage Persistence
-  const [profiles, setProfiles] = useState(() => cleanCache('tasksync_profiles'));
-  const [teams, setTeams] = useState(() => cleanCache('tasksync_teams'));
-  const [teamMembers, setTeamMembers] = useState(() => cleanCache('tasksync_team_members'));
-  const [teamInvitations, setTeamInvitations] = useState(() => cleanCache('tasksync_team_invitations'));
-  const [projects, setProjects] = useState(() => cleanCache('tasksync_projects'));
-  const [tasks, setTasks] = useState(() => cleanCache('tasksync_tasks'));
-  const [personalTasks, setPersonalTasks] = useState(() => cleanCache('tasksync_personal_tasks'));
-  const [comments, setComments] = useState(() => cleanCache('tasksync_comments'));
-  const [attachments, setAttachments] = useState(() => cleanCache('tasksync_attachments'));
-  const [activity, setActivity] = useState(() => cleanCache('tasksync_activity'));
-
+  const [profiles, setProfiles] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamInvitations, setTeamInvitations] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [personalTasks, setPersonalTasks] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [attachments, setAttachments] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [tablesExist, setTablesExist] = useState(true);
 
-  // Initial load from Supabase if configured
+  // Realtime handlers need the latest lists without re-subscribing.
+  const teamMembersRef = useRef(teamMembers);
+  teamMembersRef.current = teamMembers;
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
+
+  // Run a Supabase query; on failure show the error and return ok: false.
+  const run = useCallback(async (failureMessage, query) => {
+    const { data, error } = await query;
+    if (error) {
+      console.error(failureMessage, error);
+      notifyError(`${failureMessage}: ${error.message}`);
+      return { ok: false, error };
+    }
+    return { ok: true, data };
+  }, [notifyError]);
+
+  // ----------------------------------------------------
+  // Loading
+  // ----------------------------------------------------
+  const loadAll = useCallback(async () => {
+    if (!userId) return;
+    const results = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('teams').select('*').order('created_at', { ascending: false }),
+      supabase.from('team_members').select('*'),
+      supabase.from('team_invitations').select('*').eq('status', 'pending'),
+      supabase.from('projects').select('*').order('created_at', { ascending: false }),
+      supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+      supabase.from('personal_tasks').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+      supabase.from('task_comments').select('*').order('created_at', { ascending: true }),
+      supabase.from('task_attachments').select('*').order('created_at', { ascending: false }),
+      supabase.from('task_activity').select('*').order('created_at', { ascending: false }),
+    ]);
+
+    const failed = results.find(r => r.error);
+    if (failed) {
+      console.error('Error loading data from Supabase:', failed.error);
+      setTablesExist(false);
+      notifyError(`Could not load your study groups: ${failed.error.message}`);
+    } else {
+      setTablesExist(true);
+    }
+
+    const [p, t, tm, inv, pr, tk, pt, c, a, act] = results.map(r => r.data || []);
+    setProfiles(p);
+    setTeams(t);
+    setTeamMembers(tm);
+    setTeamInvitations(inv);
+    setProjects(pr);
+    setTasks(tk);
+    setPersonalTasks(pt);
+    setComments(c);
+    setAttachments(a);
+    setActivity(act);
+    setLoading(false);
+  }, [userId, notifyError]);
+
   useEffect(() => {
-    async function loadSupabaseData() {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          // Profiles
-          const { data: dbProfiles } = await supabase.from('profiles').select('*');
-          if (dbProfiles) setProfiles(dbProfiles);
+    loadAll();
+  }, [loadAll]);
 
-          // Teams
-          const { data: dbTeams, error: teamsError } = await supabase.from('teams').select('*');
-          if (teamsError) {
-            console.warn('Supabase query notice:', teamsError.message);
-            setTablesExist(false);
-            return;
-          }
-          setTablesExist(true);
-          if (dbTeams) setTeams(dbTeams);
-
-          // Projects
-          const { data: dbProjects } = await supabase.from('projects').select('*');
-          if (dbProjects) setProjects(dbProjects);
-
-          // Tasks
-          const { data: dbTasks } = await supabase.from('tasks').select('*');
-          if (dbTasks) setTasks(dbTasks);
-
-          // Members
-          const { data: dbMembers } = await supabase.from('team_members').select('*');
-          if (dbMembers) setTeamMembers(dbMembers);
-
-          // Personal Tasks
-          if (user?.id) {
-            const { data: dbPersonal } = await supabase
-              .from('personal_tasks')
-              .select('*')
-              .eq('user_id', user.id);
-            if (dbPersonal) setPersonalTasks(dbPersonal);
-          }
-
-          // Comments
-          const { data: dbComments } = await supabase.from('task_comments').select('*');
-          if (dbComments) setComments(dbComments);
-
-          // Attachments
-          const { data: dbAttachments } = await supabase.from('task_attachments').select('*');
-          if (dbAttachments) setAttachments(dbAttachments);
-
-          // Activity
-          const { data: dbActivity } = await supabase.from('task_activity').select('*');
-          if (dbActivity) setActivity(dbActivity);
-        } catch (e) {
-          console.warn('Error loading Supabase data:', e);
-          setTablesExist(false);
-        }
+  // Fire-and-forget email; a failure shows a toast but never undoes the save.
+  const notifyByEmail = useCallback((type, payload) => {
+    sendEmail(type, payload).then((result) => {
+      if (!result.ok) {
+        console.warn(`Email "${type}" not sent:`, result.error);
+        notifyError(result.error, 'Email not sent');
       }
-    }
-    loadSupabaseData();
-  }, [user?.id]);
+    });
+  }, [notifyError]);
 
-  // Sync state to localStorage
-  useEffect(() => {
-    localStorage.setItem('tasksync_profiles', JSON.stringify(profiles));
-    localStorage.setItem('tasksync_teams', JSON.stringify(teams));
-    localStorage.setItem('tasksync_team_members', JSON.stringify(teamMembers));
-    localStorage.setItem('tasksync_team_invitations', JSON.stringify(teamInvitations));
-    localStorage.setItem('tasksync_projects', JSON.stringify(projects));
-    localStorage.setItem('tasksync_tasks', JSON.stringify(tasks));
-    localStorage.setItem('tasksync_personal_tasks', JSON.stringify(personalTasks));
-    localStorage.setItem('tasksync_comments', JSON.stringify(comments));
-    localStorage.setItem('tasksync_attachments', JSON.stringify(attachments));
-    localStorage.setItem('tasksync_activity', JSON.stringify(activity));
-  }, [profiles, teams, teamMembers, teamInvitations, projects, tasks, personalTasks, comments, attachments, activity]);
-
-  // Realtime Supabase listeners if configured
-  useEffect(() => {
-    if (isSupabaseConfigured && supabase) {
-      const taskChannel = supabase
-        .channel('public:tasks')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setTasks(prev => [payload.new, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setTasks(prev => prev.map(t => (t.id === payload.new.id ? payload.new : t)));
-          } else if (payload.eventType === 'DELETE') {
-            setTasks(prev => prev.filter(t => t.id === payload.old.id));
-          }
-        })
-        .subscribe();
-
-      const commentsChannel = supabase
-        .channel('public:task_comments')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments' }, (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setComments(prev => [...prev, payload.new]);
-          }
-        })
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(taskChannel);
-        supabase.removeChannel(commentsChannel);
-      };
-    }
+  const ensureProfile = useCallback(async (profileId) => {
+    if (!profileId || profilesRef.current.some(p => p.id === profileId)) return;
+    const { data } = await supabase.from('profiles').select('*').eq('id', profileId).maybeSingle();
+    if (data) setProfiles(prev => upsertById(prev, data));
   }, []);
 
   // ----------------------------------------------------
-  // Helper: Log Activity
+  // Realtime: apply other people's changes as they happen
   // ----------------------------------------------------
-  const logActivity = (taskId, action, oldValue = '', newValue = '') => {
-    const newEntry = {
-      id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      task_id: taskId,
-      user_id: user?.id || 'system',
-      action,
-      old_value: oldValue,
-      new_value: newValue,
-      created_at: new Date().toISOString()
+  useEffect(() => {
+    if (!userId) return undefined;
+
+    const simpleTables = {
+      teams: setTeams,
+      team_invitations: setTeamInvitations,
+      projects: setProjects,
+      tasks: setTasks,
+      personal_tasks: setPersonalTasks,
+      task_comments: setComments,
+      task_attachments: setAttachments,
+      task_activity: setActivity,
     };
-    setActivity(prev => [newEntry, ...prev]);
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('task_activity').insert(newEntry).then();
+
+    const channel = supabase.channel(`tasksync-data-${userId}`);
+
+    Object.entries(simpleTables).forEach(([table, setter]) => {
+      channel.on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          if (payload.old?.id) setter(prev => removeById(prev, payload.old.id));
+        } else if (payload.new?.id) {
+          setter(prev => upsertById(prev, payload.new));
+        }
+      });
+    });
+
+    // Joining or leaving a team changes which teams, projects and tasks this
+    // user may see, so reload everything in that case.
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, (payload) => {
+      if (payload.eventType === 'DELETE') {
+        const removedId = payload.old?.id;
+        const wasMine = teamMembersRef.current.some(m => m.id === removedId && m.user_id === userId);
+        if (wasMine) {
+          loadAll();
+        } else if (removedId) {
+          setTeamMembers(prev => removeById(prev, removedId));
+        }
+        return;
+      }
+      const row = payload.new;
+      const isNewForMe = row.user_id === userId && !teamMembersRef.current.some(m => m.id === row.id);
+      if (isNewForMe) {
+        loadAll();
+        return;
+      }
+      setTeamMembers(prev => upsertById(prev, row));
+      ensureProfile(row.user_id);
+    });
+
+    channel.subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId, loadAll, ensureProfile]);
+
+  // ----------------------------------------------------
+  // Permissions (mirror the database rules so the UI only offers allowed actions)
+  // ----------------------------------------------------
+  const myTeamRole = (teamId) =>
+    teamMembers.find(tm => tm.team_id === teamId && tm.user_id === userId)?.role || null;
+
+  // Organizers of a group: whoever created it, plus anyone they made an organizer.
+  const canManageTeam = (teamId) => Boolean(teamId) && LEADER_ROLES.includes(myTeamRole(teamId));
+
+  const manageableTeams = teams.filter(t => canManageTeam(t.id));
+
+  // Study groups: every member can add subjects, tasks, sessions, resources
+  // and questions. Managing a specific item is for its creator or a leader.
+  const isMemberOf = (teamId) => Boolean(teamId) && Boolean(myTeamRole(teamId));
+  const memberTeams = teams.filter(t => isMemberOf(t.id));
+  const canManageItem = (item) => Boolean(item) && (canManageTeam(item.team_id) || item.created_by === userId);
+  const canManageTask = canManageItem;
+  const canManageProject = canManageItem;
+
+  const teamLeaderIds = (teamId) =>
+    teamMembers.filter(tm => tm.team_id === teamId && LEADER_ROLES.includes(tm.role)).map(tm => tm.user_id);
+
+  const myPendingInvitations = teamInvitations.filter(
+    inv => inv.status === 'pending' && inv.email?.toLowerCase() === user?.email?.toLowerCase()
+  );
+
+  // ----------------------------------------------------
+  // Activity log
+  // ----------------------------------------------------
+  const logActivity = async (taskId, action, oldValue = '', newValue = '') => {
+    const entry = {
+      id: newId(),
+      task_id: taskId,
+      user_id: userId,
+      action,
+      old_value: oldValue ?? '',
+      new_value: newValue ?? '',
+      created_at: nowIso(),
+    };
+    setActivity(prev => [entry, ...prev]);
+    const { error } = await supabase.from('task_activity').insert(entry);
+    if (error) {
+      console.warn('Activity not logged:', error.message);
+      setActivity(prev => removeById(prev, entry.id));
     }
   };
 
   // ----------------------------------------------------
-  // Automatic Progress Calculations
-  // Formula: Project Progress = (Completed Subtasks / Total Subtasks) * 100
+  // Calculations
+  // Project progress = completed subtasks / total subtasks x 100
   // ----------------------------------------------------
   const getProjectProgress = (projectId) => {
-    const projectSubtasks = tasks.filter(t => t.project_id === projectId && t.parent_task_id !== null);
-    if (projectSubtasks.length > 0) {
-      const completed = projectSubtasks.filter(t => t.status === 'Completed').length;
-      return Math.round((completed / projectSubtasks.length) * 100);
-    }
-    // If no explicit subtasks, use all tasks in the project
-    const allProjectTasks = tasks.filter(t => t.project_id === projectId);
-    if (allProjectTasks.length === 0) return 0;
-    const completed = allProjectTasks.filter(t => t.status === 'Completed').length;
-    return Math.round((completed / allProjectTasks.length) * 100);
+    const projectTasks = tasks.filter(t => t.project_id === projectId);
+    const subtasks = projectTasks.filter(t => t.parent_task_id);
+    const basis = subtasks.length > 0 ? subtasks : projectTasks;
+    if (basis.length === 0) return 0;
+    const completed = basis.filter(t => t.status === 'Completed').length;
+    return Math.round((completed / basis.length) * 100);
   };
 
-  const getSubtasks = (parentTaskId) => {
-    return tasks.filter(t => t.parent_task_id === parentTaskId);
-  };
+  const getSubtasks = (parentTaskId) => tasks.filter(t => t.parent_task_id === parentTaskId);
 
-  // ----------------------------------------------------
-  // Member Productivity & Workload Calculations
-  // ----------------------------------------------------
   const getMemberWorkload = (memberId) => {
     const memberTasks = tasks.filter(t => t.assigned_to === memberId);
     const activeTasks = memberTasks.filter(t => t.status !== 'Completed');
     const overdueTasks = activeTasks.filter(t => isOverdue(t.due_date, t.status));
     const completedTasks = memberTasks.filter(t => t.status === 'Completed');
     const underReviewTasks = memberTasks.filter(t => t.status === 'Under Review');
-
     const workloadInfo = getWorkloadLevel(activeTasks.length, overdueTasks.length);
 
     return {
@@ -221,435 +281,559 @@ export function DataProvider({ children }) {
       upcomingDeadlines: activeTasks
         .filter(t => t.due_date)
         .sort((a, b) => new Date(a.due_date) - new Date(b.due_date))
-        .slice(0, 3)
+        .slice(0, 3),
     };
   };
 
-  // Smart Workload Balancer: Recommend assignee
+  // Recommend the member with the lowest load (active x 2 + overdue x 5).
   const getRecommendedAssignee = (teamId) => {
     const membersInTeam = teamMembers
       .filter(tm => tm.team_id === teamId)
-      .map(tm => {
-        const profile = profiles.find(p => p.id === tm.user_id);
+      .map((tm) => {
         const workload = getMemberWorkload(tm.user_id);
         return {
           ...tm,
-          profile,
+          profile: profiles.find(p => p.id === tm.user_id),
           workload,
-          // Workload score: lower is better
-          score: workload.activeCount * 2 + workload.overdueCount * 5
+          score: workload.activeCount * 2 + workload.overdueCount * 5,
         };
       })
       .sort((a, b) => a.score - b.score);
 
-    return {
-      recommended: membersInTeam[0] || null,
-      allMembers: membersInTeam
-    };
+    return { recommended: membersInTeam[0] || null, allMembers: membersInTeam };
   };
 
-  // ----------------------------------------------------
-  // Team Stats for Dashboard
-  // ----------------------------------------------------
   const getTeamStats = (teamId = null) => {
     const filteredProjects = teamId ? projects.filter(p => p.team_id === teamId) : projects;
     const filteredTasks = teamId ? tasks.filter(t => t.team_id === teamId) : tasks;
     const filteredMembers = teamId ? teamMembers.filter(tm => tm.team_id === teamId) : teamMembers;
 
     const completed = filteredTasks.filter(t => t.status === 'Completed').length;
-    const inProgress = filteredTasks.filter(t => t.status === 'In Progress').length;
-    const underReview = filteredTasks.filter(t => t.status === 'Under Review').length;
-    const overdue = filteredTasks.filter(t => isOverdue(t.due_date, t.status)).length;
-    const pending = filteredTasks.length - completed;
-    const completionPercentage = filteredTasks.length > 0 ? Math.round((completed / filteredTasks.length) * 100) : 0;
-
     return {
       activeProjectsCount: filteredProjects.filter(p => p.status !== 'Completed' && p.status !== 'Cancelled').length,
       totalProjectsCount: filteredProjects.length,
       membersCount: filteredMembers.length,
       totalTasksCount: filteredTasks.length,
       completedCount: completed,
-      inProgressCount: inProgress,
-      underReviewCount: underReview,
-      overdueCount: overdue,
-      pendingCount: pending,
-      completionPercentage
+      inProgressCount: filteredTasks.filter(t => t.status === 'In Progress').length,
+      underReviewCount: filteredTasks.filter(t => t.status === 'Under Review').length,
+      overdueCount: filteredTasks.filter(t => isOverdue(t.due_date, t.status)).length,
+      pendingCount: filteredTasks.length - completed,
+      completionPercentage: filteredTasks.length > 0 ? Math.round((completed / filteredTasks.length) * 100) : 0,
     };
   };
 
   // ----------------------------------------------------
-  // CRUD Actions: Teams & Members
+  // Teams & members
   // ----------------------------------------------------
-  const createTeam = ({ name, description, avatar_url }) => {
-    const newTeamId = `team-${Date.now()}`;
-    const newTeam = {
-      id: newTeamId,
+  const createTeam = async ({ name, description, avatar_url }) => {
+    const team = {
+      id: newId(),
       name,
       description: description || '',
-      avatar_url: avatar_url || `https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=150&auto=format&fit=crop&q=80`,
-      created_by: user?.id,
-      created_at: new Date().toISOString()
+      avatar_url: avatar_url || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=150&auto=format&fit=crop&q=80',
+      created_by: userId,
+      created_at: nowIso(),
     };
-    setTeams(prev => [newTeam, ...prev]);
+    const membership = { id: newId(), team_id: team.id, user_id: userId, role: 'leader', joined_at: nowIso() };
 
-    // Automatically make creator the team leader
-    const newMembership = {
-      id: `tm-${Date.now()}`,
-      team_id: newTeamId,
-      user_id: user?.id,
-      role: 'leader',
-      joined_at: new Date().toISOString()
-    };
-    setTeamMembers(prev => [...prev, newMembership]);
+    setTeams(prev => upsertById(prev, team));
+    setTeamMembers(prev => upsertById(prev, membership));
 
-    addNotification({
-      title: "Team Created",
-      message: `You created team "${name}".`,
-      type: "team_invite"
-    });
+    const teamResult = await run('Could not create the study group', supabase.from('teams').insert(team));
+    if (!teamResult.ok) {
+      setTeams(prev => removeById(prev, team.id));
+      setTeamMembers(prev => removeById(prev, membership.id));
+      return null;
+    }
+    const memberResult = await run('Study group created, but you could not be added as its leader',
+      supabase.from('team_members').insert(membership));
+    if (!memberResult.ok) setTeamMembers(prev => removeById(prev, membership.id));
 
-    return newTeam;
+    addNotification({ title: 'Study group created', message: `You created the study group "${name}".`, type: 'team_invite' });
+    return team;
   };
 
-  const inviteMember = ({ teamId, email, role = 'member' }) => {
-    const existing = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
-    const token = `inv-${Math.random().toString(36).substr(2, 9)}`;
-    const newInvite = {
-      id: `inv-${Date.now()}`,
-      team_id: teamId,
-      email,
-      invited_by: user?.id,
-      invitation_token: token,
-      status: 'pending',
-      created_at: new Date().toISOString()
-    };
-    setTeamInvitations(prev => [newInvite, ...prev]);
+  // Adds an existing user straight away; otherwise stores an invitation that
+  // the person can accept after signing up with that email.
+  const inviteMember = async ({ teamId, email, role = 'member' }) => {
+    const normalized = email.trim().toLowerCase();
+    const team = teams.find(t => t.id === teamId);
+    // Any member can invite; only organizers can invite another organizer.
+    const teamRole = role === 'leader' && canManageTeam(teamId) ? 'leader' : 'member';
 
-    // If user already exists in profiles, add them as member
+    const lookup = await run('Could not look up that email',
+      supabase.from('profiles').select('*').eq('email', normalized).maybeSingle());
+    if (!lookup.ok) return { status: 'error', message: lookup.error.message };
+
+    const existing = lookup.data;
     if (existing) {
-      const alreadyMember = teamMembers.some(tm => tm.team_id === teamId && tm.user_id === existing.id);
-      if (!alreadyMember) {
-        const newMember = {
-          id: `tm-${Date.now()}`,
-          team_id: teamId,
-          user_id: existing.id,
-          role,
-          joined_at: new Date().toISOString()
-        };
-        setTeamMembers(prev => [...prev, newMember]);
+      setProfiles(prev => upsertById(prev, existing));
+      if (teamMembers.some(tm => tm.team_id === teamId && tm.user_id === existing.id)) {
+        return { status: 'already_member', message: `${existing.full_name} is already in this team.` };
       }
+      const membership = { id: newId(), team_id: teamId, user_id: existing.id, role: teamRole, joined_at: nowIso() };
+      setTeamMembers(prev => upsertById(prev, membership));
+      const added = await run('Could not add the member', supabase.from('team_members').insert(membership));
+      if (!added.ok) {
+        setTeamMembers(prev => removeById(prev, membership.id));
+        return { status: 'error', message: added.error.message };
+      }
+      addNotification({
+        title: 'Added to a study group',
+        message: `${user?.full_name || 'A group member'} added you to "${team?.name || 'a study group'}".`,
+        type: 'team_invite',
+        userId: existing.id,
+      });
+      notifyByEmail('member_added', { team_id: teamId, user_id: existing.id });
+      return { status: 'added', message: `${existing.full_name} was added to the team and emailed.` };
     }
 
-    addNotification({
-      title: "Invitation Sent",
-      message: `Invitation link generated for ${email}.`,
-      type: "team_invite"
-    });
-
-    return { invite: newInvite, link: `${window.location.origin}/invite/${token}` };
-  };
-
-  const removeMember = (teamId, userId) => {
-    setTeamMembers(prev => prev.filter(tm => !(tm.team_id === teamId && tm.user_id === userId)));
-    addNotification({
-      title: "Member Removed",
-      message: `Member removed from team workspace.`,
-      type: "info"
-    });
-  };
-
-  const updateMemberRole = (teamId, userId, newRole) => {
-    setTeamMembers(prev =>
-      prev.map(tm => (tm.team_id === teamId && tm.user_id === userId ? { ...tm, role: newRole } : tm))
+    const already = teamInvitations.find(
+      inv => inv.team_id === teamId && inv.status === 'pending' && inv.email.toLowerCase() === normalized
     );
+    if (already) {
+      notifyByEmail('invitation_created', { invitation_id: already.id });
+      return {
+        status: 'invited',
+        link: `${window.location.origin}/?invite=${already.invitation_token}`,
+        message: `${normalized} was already invited, so the invitation email was sent again.`,
+      };
+    }
+
+    const invite = {
+      id: newId(),
+      team_id: teamId,
+      team_name: team?.name || null,
+      email: normalized,
+      role: teamRole,
+      invited_by: userId,
+      invitation_token: newId(),
+      status: 'pending',
+      created_at: nowIso(),
+    };
+    setTeamInvitations(prev => upsertById(prev, invite));
+    const saved = await run('Could not create the invitation', supabase.from('team_invitations').insert(invite));
+    if (!saved.ok) {
+      setTeamInvitations(prev => removeById(prev, invite.id));
+      return { status: 'error', message: saved.error.message };
+    }
+    notifyByEmail('invitation_created', { invitation_id: invite.id });
+    return {
+      status: 'invited',
+      link: `${window.location.origin}/?invite=${invite.invitation_token}`,
+      message: `${normalized} has no account yet, so an invitation email is on its way. You can also share this link; after signing up with that email they can accept.`,
+    };
+  };
+
+  const cancelInvitation = async (invitationId) => {
+    const previous = teamInvitations.find(i => i.id === invitationId);
+    setTeamInvitations(prev => removeById(prev, invitationId));
+    const result = await run('Could not cancel the invitation',
+      supabase.from('team_invitations').delete().eq('id', invitationId));
+    if (!result.ok && previous) setTeamInvitations(prev => upsertById(prev, previous));
+  };
+
+  const acceptInvitation = async (invitation) => {
+    const membership = {
+      id: newId(),
+      team_id: invitation.team_id,
+      user_id: userId,
+      role: invitation.role || 'member',
+      joined_at: nowIso(),
+    };
+    const joined = await run('Could not join the group', supabase.from('team_members').insert(membership));
+    if (!joined.ok) return false;
+    await run('Joined, but could not update the invitation',
+      supabase.from('team_invitations').update({ status: 'accepted' }).eq('id', invitation.id));
+    await loadAll();
+    addNotification({
+      title: 'Joined study group',
+      message: `You joined "${invitation.team_name || 'the group'}".`,
+      type: 'team_invite',
+    });
+    return true;
+  };
+
+  const declineInvitation = async (invitation) => {
+    setTeamInvitations(prev => prev.map(i => (i.id === invitation.id ? { ...i, status: 'rejected' } : i)));
+    const result = await run('Could not decline the invitation',
+      supabase.from('team_invitations').update({ status: 'rejected' }).eq('id', invitation.id));
+    if (!result.ok) setTeamInvitations(prev => upsertById(prev, invitation));
+  };
+
+  const removeMember = async (teamId, memberUserId) => {
+    const membership = teamMembers.find(tm => tm.team_id === teamId && tm.user_id === memberUserId);
+    if (!membership) return;
+    setTeamMembers(prev => removeById(prev, membership.id));
+    const result = await run('Could not remove the member',
+      supabase.from('team_members').delete().eq('id', membership.id));
+    if (!result.ok) {
+      setTeamMembers(prev => upsertById(prev, membership));
+      return;
+    }
+    const team = teams.find(t => t.id === teamId);
+    addNotification({
+      title: 'Removed from study group',
+      message: `You were removed from "${team?.name || 'a study group'}".`,
+      type: 'info',
+      userId: memberUserId,
+    });
+  };
+
+  const updateMemberRole = async (teamId, memberUserId, newRole) => {
+    const membership = teamMembers.find(tm => tm.team_id === teamId && tm.user_id === memberUserId);
+    if (!membership) return;
+    setTeamMembers(prev => prev.map(tm => (tm.id === membership.id ? { ...tm, role: newRole } : tm)));
+    const result = await run('Could not change the member role',
+      supabase.from('team_members').update({ role: newRole }).eq('id', membership.id));
+    if (!result.ok) setTeamMembers(prev => upsertById(prev, membership));
   };
 
   // ----------------------------------------------------
-  // CRUD Actions: Projects
+  // Projects
   // ----------------------------------------------------
-  const createProject = (projectData) => {
-    const newProj = {
-      id: `proj-${Date.now()}`,
+  const createProject = async (projectData) => {
+    const project = cleanDates({
+      id: newId(),
       team_id: projectData.team_id,
       name: projectData.name,
       description: projectData.description || '',
       priority: projectData.priority || 'Medium',
       status: projectData.status || 'Planning',
-      category: projectData.category || 'Development',
+      category: projectData.category || 'Course',
       start_date: projectData.start_date || new Date().toISOString().split('T')[0],
-      due_date: projectData.due_date || '',
-      created_by: user?.id,
-      created_at: new Date().toISOString()
-    };
-    setProjects(prev => [newProj, ...prev]);
-
-    addNotification({
-      title: "New Project Created",
-      message: `Project "${newProj.name}" was created successfully.`,
-      type: "project_assigned"
+      due_date: projectData.due_date,
+      created_by: userId,
+      created_at: nowIso(),
     });
-
-    return newProj;
+    setProjects(prev => upsertById(prev, project));
+    const result = await run('Could not add the subject', supabase.from('projects').insert(project));
+    if (!result.ok) {
+      setProjects(prev => removeById(prev, project.id));
+      return null;
+    }
+    addNotification({
+      title: 'Subject added',
+      message: `Subject "${project.name}" was added. The group is being emailed.`,
+      type: 'project_assigned',
+    });
+    notifyByEmail('project_created', { project_id: project.id });
+    return project;
   };
 
-  const updateProject = (projectId, updates) => {
-    setProjects(prev =>
-      prev.map(p => (p.id === projectId ? { ...p, ...updates } : p))
-    );
+  const updateProject = async (projectId, updates) => {
+    const previous = projects.find(p => p.id === projectId);
+    if (!previous) return null;
+    const clean = cleanDates({ ...updates, updated_at: nowIso() });
+    setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...clean } : p)));
+    const result = await run('Could not update the subject',
+      supabase.from('projects').update(clean).eq('id', projectId));
+    if (!result.ok) {
+      setProjects(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...clean };
   };
 
-  const deleteProject = (projectId) => {
-    setProjects(prev => prev.filter(p => p.id !== projectId));
+  const deleteProject = async (projectId) => {
+    const previousProject = projects.find(p => p.id === projectId);
+    const previousTasks = tasks.filter(t => t.project_id === projectId);
+    setProjects(prev => removeById(prev, projectId));
     setTasks(prev => prev.filter(t => t.project_id !== projectId));
+    const result = await run('Could not delete the subject',
+      supabase.from('projects').delete().eq('id', projectId));
+    if (!result.ok) {
+      if (previousProject) setProjects(prev => upsertById(prev, previousProject));
+      setTasks(prev => [...previousTasks, ...prev]);
+    }
   };
 
   // ----------------------------------------------------
-  // CRUD Actions: Tasks & Review Workflow
+  // Tasks & review workflow
   // ----------------------------------------------------
-  const createTask = (taskData) => {
-    const newTask = {
-      id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+  const createTask = async (taskData) => {
+    const task = cleanDates({
+      id: newId(),
       project_id: taskData.project_id || null,
       team_id: taskData.team_id,
       parent_task_id: taskData.parent_task_id || null,
       title: taskData.title,
       description: taskData.description || '',
       assigned_to: taskData.assigned_to || null,
-      created_by: user?.id,
+      created_by: userId,
       priority: taskData.priority || 'Medium',
       status: taskData.status || 'To Do',
       progress: taskData.progress || 0,
       start_date: taskData.start_date || new Date().toISOString().split('T')[0],
-      due_date: taskData.due_date || '',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
+      due_date: taskData.due_date,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    });
 
-    setTasks(prev => [newTask, ...prev]);
-    logActivity(newTask.id, 'created', '', newTask.title);
-
-    // Notify assigned member
-    if (newTask.assigned_to && newTask.assigned_to !== user?.id) {
-      addNotification({
-        title: "New Task Assigned",
-        message: `You were assigned: "${newTask.title}"`,
-        type: "task_assigned",
-        related_task_id: newTask.id,
-        userId: newTask.assigned_to
-      });
+    setTasks(prev => upsertById(prev, task));
+    const result = await run('Could not create the task', supabase.from('tasks').insert(task));
+    if (!result.ok) {
+      setTasks(prev => removeById(prev, task.id));
+      return null;
     }
 
-    return newTask;
+    // The task now exists, so rows that reference it can be saved.
+    logActivity(task.id, 'created', '', task.title);
+    if (task.assigned_to && task.assigned_to !== userId) {
+      addNotification({
+        title: 'New task assigned',
+        message: `${user?.full_name || 'A group member'} assigned you "${task.title}".`,
+        type: 'task_assigned',
+        related_task_id: task.id,
+        userId: task.assigned_to,
+      });
+      notifyByEmail('task_assigned', { task_id: task.id });
+    }
+    return task;
   };
 
-  const updateTask = (taskId, updates) => {
+  // statusAction lets callers label the status change in the activity log.
+  const updateTask = async (taskId, updates, { statusAction = 'status_change' } = {}) => {
     const existing = tasks.find(t => t.id === taskId);
-    if (!existing) return;
+    if (!existing) return null;
 
-    // Track status change for activity log
-    if (updates.status && updates.status !== existing.status) {
-      logActivity(taskId, 'status_change', existing.status, updates.status);
-    }
-    if (updates.assigned_to && updates.assigned_to !== existing.assigned_to) {
-      const newAssignee = profiles.find(p => p.id === updates.assigned_to);
-      logActivity(taskId, 'reassigned', existing.assigned_to, newAssignee?.full_name || updates.assigned_to);
-
-      addNotification({
-        title: "Task Reassigned",
-        message: `Task "${existing.title}" was reassigned.`,
-        type: "task_assigned",
-        related_task_id: taskId,
-        userId: updates.assigned_to
-      });
-    }
-
-    const updatedTask = {
-      ...existing,
-      ...updates,
-      updated_at: new Date().toISOString()
-    };
-
+    const clean = cleanDates({ ...updates, updated_at: nowIso() });
+    const updatedTask = { ...existing, ...clean };
     setTasks(prev => prev.map(t => (t.id === taskId ? updatedTask : t)));
 
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('tasks').update(updates).eq('id', taskId).then();
+    const result = await run('Could not update the task', supabase.from('tasks').update(clean).eq('id', taskId));
+    if (!result.ok) {
+      setTasks(prev => prev.map(t => (t.id === taskId ? existing : t)));
+      return null;
     }
 
+    if (clean.status && clean.status !== existing.status) {
+      logActivity(taskId, statusAction, existing.status, clean.status);
+    }
+    if ('assigned_to' in clean && clean.assigned_to !== existing.assigned_to) {
+      const newAssignee = profiles.find(p => p.id === clean.assigned_to);
+      logActivity(taskId, 'reassigned', '', newAssignee?.full_name || 'Unassigned');
+      if (clean.assigned_to && clean.assigned_to !== userId) {
+        addNotification({
+          title: 'Task assigned to you',
+          message: `"${existing.title}" was assigned to you.`,
+          type: 'task_assigned',
+          related_task_id: taskId,
+          userId: clean.assigned_to,
+        });
+        notifyByEmail('task_assigned', { task_id: taskId });
+      }
+    }
     return updatedTask;
   };
 
-  const submitTaskForReview = (taskId) => {
+  const submitTaskForReview = async (taskId) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
+    const updated = await updateTask(
+      taskId,
+      { status: 'Under Review', progress: Math.max(task.progress || 0, 90) },
+      { statusAction: 'submitted_for_review' }
+    );
+    if (!updated) return;
 
-    updateTask(taskId, {
-      status: 'Under Review',
-      progress: Math.max(task.progress, 90)
+    // Reviewers: the person who created the task plus the organizers.
+    const reviewers = [...new Set([...teamLeaderIds(task.team_id), task.created_by].filter(id => id && id !== userId))];
+    if (reviewers.length) notifyByEmail('task_submitted', { task_id: taskId });
+    reviewers.forEach((reviewerId) => {
+      addNotification({
+        title: 'Task ready for review',
+        message: `${user?.full_name || 'A member'} submitted "${task.title}" for review.`,
+        type: 'task_review',
+        related_task_id: taskId,
+        userId: reviewerId,
+      });
     });
-
-    logActivity(taskId, 'submitted_for_review', task.status, 'Under Review');
-
-    // Notify team leader/creator
-    addNotification({
-      title: "Task Submitted for Review",
-      message: `"${task.title}" was submitted for review by ${user?.full_name || 'member'}.`,
-      type: "task_review",
-      related_task_id: taskId
-    });
+    if (reviewers.length === 0) {
+      addNotification({
+        title: 'Submitted for review',
+        message: `"${task.title}" is waiting for review.`,
+        type: 'task_review',
+        related_task_id: taskId,
+      });
+    }
   };
 
-  const approveTaskReview = (taskId) => {
+  const approveTaskReview = async (taskId) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
+    const updated = await updateTask(taskId, { status: 'Completed', progress: 100 }, { statusAction: 'approved' });
+    if (!updated) return;
 
-    updateTask(taskId, {
-      status: 'Completed',
-      progress: 100
-    });
-
-    logActivity(taskId, 'approved_completed', task.status, 'Completed');
-
-    // Confetti celebration
     try {
       confetti({
         particleCount: 80,
         spread: 60,
-        origin: { y: 0.6 }
+        origin: { y: 0.6 },
+        colors: ['#7B3F00', '#D2B48C', '#F6F1E9', '#73883F', '#B08024'],
       });
     } catch {
-      // ignore
+      // confetti is decoration only
     }
 
-    // Notify assignee
-    if (task.assigned_to) {
+    if (task.assigned_to && task.assigned_to !== userId) {
       addNotification({
-        title: "Task Approved!",
-        message: `Your task "${task.title}" has been approved and marked as Completed!`,
-        type: "task_completed",
+        title: 'Task approved',
+        message: `Your task "${task.title}" was approved and marked Completed.`,
+        type: 'task_completed',
         related_task_id: taskId,
-        userId: task.assigned_to
+        userId: task.assigned_to,
       });
+      notifyByEmail('task_approved', { task_id: taskId });
     }
   };
 
-  const requestChangesReview = (taskId, feedbackComment) => {
+  const requestChangesReview = async (taskId, feedbackComment) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
+    const updated = await updateTask(taskId, { status: 'Changes Requested' }, { statusAction: 'changes_requested' });
+    if (!updated) return;
 
-    updateTask(taskId, {
-      status: 'Changes Requested'
-    });
+    if (feedbackComment) await addComment(taskId, `Review feedback: ${feedbackComment}`, { notify: false });
 
-    logActivity(taskId, 'changes_requested', task.status, 'Changes Requested');
-
-    if (feedbackComment) {
-      addComment(taskId, `Review Feedback: ${feedbackComment}`);
-    }
-
-    // Notify assignee
-    if (task.assigned_to) {
+    if (task.assigned_to && task.assigned_to !== userId) {
       addNotification({
-        title: "Changes Requested on Task",
-        message: `Team leader requested changes on "${task.title}". Check comments for feedback.`,
-        type: "changes_requested",
+        title: 'Changes requested',
+        message: `${user?.full_name || 'The task creator'} requested changes on "${task.title}". See the comments for feedback.`,
+        type: 'changes_requested',
         related_task_id: taskId,
-        userId: task.assigned_to
+        userId: task.assigned_to,
       });
+      notifyByEmail('task_changes_requested', { task_id: taskId, feedback: feedbackComment || '' });
     }
   };
 
-  const deleteTask = (taskId) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId && t.parent_task_id !== taskId));
-    if (isSupabaseConfigured && supabase) {
-      supabase.from('tasks').delete().eq('id', taskId).then();
-    }
+  const deleteTask = async (taskId) => {
+    const ids = collectTaskTree(tasks, taskId);
+    const removed = tasks.filter(t => ids.has(t.id));
+    setTasks(prev => prev.filter(t => !ids.has(t.id)));
+    // Subtasks are removed by ON DELETE CASCADE.
+    const result = await run('Could not delete the task', supabase.from('tasks').delete().eq('id', taskId));
+    if (!result.ok) setTasks(prev => [...removed, ...prev]);
   };
 
   // ----------------------------------------------------
-  // CRUD Actions: Personal Tasks
+  // Personal tasks
   // ----------------------------------------------------
-  const createPersonalTask = (data) => {
-    const newPt = {
-      id: `pt-${Date.now()}`,
-      user_id: user?.id,
+  const createPersonalTask = async (data) => {
+    const task = cleanDates({
+      id: newId(),
+      user_id: userId,
       title: data.title,
       description: data.description || '',
       priority: data.priority || 'Medium',
       status: data.status || 'To Do',
-      due_date: data.due_date || '',
+      due_date: data.due_date,
       category: data.category || 'General',
-      reminder_date: data.reminder_date || null,
-      created_at: new Date().toISOString()
-    };
-    setPersonalTasks(prev => [newPt, ...prev]);
-    return newPt;
+      reminder_date: data.reminder_date,
+      created_at: nowIso(),
+    });
+    setPersonalTasks(prev => upsertById(prev, task));
+    const result = await run('Could not save the task', supabase.from('personal_tasks').insert(task));
+    if (!result.ok) {
+      setPersonalTasks(prev => removeById(prev, task.id));
+      return null;
+    }
+    return task;
   };
 
-  const updatePersonalTask = (id, updates) => {
-    setPersonalTasks(prev =>
-      prev.map(pt => (pt.id === id ? { ...pt, ...updates } : pt))
-    );
+  const updatePersonalTask = async (id, updates) => {
+    const previous = personalTasks.find(pt => pt.id === id);
+    if (!previous) return null;
+    const clean = cleanDates({ ...updates, updated_at: nowIso() });
+    setPersonalTasks(prev => prev.map(pt => (pt.id === id ? { ...pt, ...clean } : pt)));
+    const result = await run('Could not update the task', supabase.from('personal_tasks').update(clean).eq('id', id));
+    if (!result.ok) {
+      setPersonalTasks(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...clean };
   };
 
   const togglePersonalTaskStatus = (id) => {
-    setPersonalTasks(prev =>
-      prev.map(pt => {
-        if (pt.id === id) {
-          const nextStatus = pt.status === 'Completed' ? 'To Do' : 'Completed';
-          return { ...pt, status: nextStatus };
-        }
-        return pt;
-      })
-    );
+    const task = personalTasks.find(pt => pt.id === id);
+    if (!task) return null;
+    return updatePersonalTask(id, { status: task.status === 'Completed' ? 'To Do' : 'Completed' });
   };
 
-  const deletePersonalTask = (id) => {
-    setPersonalTasks(prev => prev.filter(pt => pt.id !== id));
+  const deletePersonalTask = async (id) => {
+    const previous = personalTasks.find(pt => pt.id === id);
+    setPersonalTasks(prev => removeById(prev, id));
+    const result = await run('Could not delete the task', supabase.from('personal_tasks').delete().eq('id', id));
+    if (!result.ok && previous) setPersonalTasks(prev => upsertById(prev, previous));
   };
 
   // ----------------------------------------------------
-  // Comments & Attachments
+  // Comments & attachments
   // ----------------------------------------------------
-  const addComment = (taskId, text) => {
-    const newComment = {
-      id: `comment-${Date.now()}`,
-      task_id: taskId,
-      user_id: user?.id,
-      comment: text,
-      created_at: new Date().toISOString()
-    };
-    setComments(prev => [...prev, newComment]);
-    logActivity(taskId, 'comment_added', '', text.substring(0, 30));
-
-    // Notify task assignee if someone else commented
-    const task = tasks.find(t => t.id === taskId);
-    if (task && task.assigned_to && task.assigned_to !== user?.id) {
-      addNotification({
-        title: "New Comment on Task",
-        message: `${user?.full_name || 'Someone'} commented on "${task.title}"`,
-        type: "comment_added",
-        related_task_id: taskId,
-        userId: task.assigned_to
-      });
+  const addComment = async (taskId, text, { notify = true } = {}) => {
+    const comment = { id: newId(), task_id: taskId, user_id: userId, comment: text, created_at: nowIso() };
+    setComments(prev => [...prev, comment]);
+    const result = await run('Could not post the comment', supabase.from('task_comments').insert(comment));
+    if (!result.ok) {
+      setComments(prev => removeById(prev, comment.id));
+      return null;
     }
 
-    return newComment;
+    logActivity(taskId, 'comment_added', '', text.substring(0, 40));
+
+    const task = tasks.find(t => t.id === taskId);
+    if (notify && task) {
+      const recipients = new Set([task.assigned_to, task.created_by].filter(id => id && id !== userId));
+      recipients.forEach((recipientId) => {
+        addNotification({
+          title: 'New comment',
+          message: `${user?.full_name || 'Someone'} commented on "${task.title}".`,
+          type: 'comment_added',
+          related_task_id: taskId,
+          userId: recipientId,
+        });
+      });
+    }
+    return comment;
   };
 
-  const addAttachment = (taskId, file) => {
-    const newAttachment = {
-      id: `att-${Date.now()}`,
+  // Uploads the file to Supabase Storage, then records it on the task.
+  const addAttachment = async (taskId, file) => {
+    const safeName = file.name.replace(/[^\w.-]+/g, '_');
+    const path = `${taskId}/${newId()}-${safeName}`;
+
+    const upload = await run('Could not upload the file',
+      supabase.storage.from(ATTACHMENTS_BUCKET).upload(path, file, { contentType: file.type || undefined }));
+    if (!upload.ok) return null;
+
+    const attachment = {
+      id: newId(),
       task_id: taskId,
-      uploaded_by: user?.id,
+      uploaded_by: userId,
       file_name: file.name,
-      file_url: file.url || URL.createObjectURL(file),
-      file_size: file.size || 102400,
+      file_url: path,
+      file_size: file.size,
       file_type: file.type || 'application/octet-stream',
-      created_at: new Date().toISOString()
+      created_at: nowIso(),
     };
-    setAttachments(prev => [newAttachment, ...prev]);
+    const saved = await run('Could not attach the file', supabase.from('task_attachments').insert(attachment));
+    if (!saved.ok) {
+      await supabase.storage.from(ATTACHMENTS_BUCKET).remove([path]);
+      return null;
+    }
+    setAttachments(prev => upsertById(prev, attachment));
     logActivity(taskId, 'attachment_added', '', file.name);
-    return newAttachment;
+    return attachment;
+  };
+
+  // The bucket is private, so downloads use a short-lived signed URL.
+  const getAttachmentUrl = async (attachment) => {
+    if (/^https?:\/\//.test(attachment.file_url)) return attachment.file_url;
+    const result = await run('Could not open the file',
+      supabase.storage.from(ATTACHMENTS_BUCKET).createSignedUrl(attachment.file_url, 300));
+    return result.ok ? result.data.signedUrl : null;
   };
 
   return (
@@ -665,37 +849,54 @@ export function DataProvider({ children }) {
         comments,
         attachments,
         activity,
+        loading,
         tablesExist,
-        // Calculation & stats functions
+        refresh: loadAll,
+        notifyByEmail,
+        // Permissions
+        myTeamRole,
+        canManageTeam,
+        manageableTeams,
+        memberTeams,
+        isMemberOf,
+        canManageItem,
+        canManageTask,
+        canManageProject,
+        myPendingInvitations,
+        // Calculations
         getProjectProgress,
         getSubtasks,
         getMemberWorkload,
         getRecommendedAssignee,
         getTeamStats,
-        // Teams actions
+        // Teams
         createTeam,
         inviteMember,
+        cancelInvitation,
+        acceptInvitation,
+        declineInvitation,
         removeMember,
         updateMemberRole,
-        // Projects actions
+        // Projects
         createProject,
         updateProject,
         deleteProject,
-        // Tasks actions
+        // Tasks
         createTask,
         updateTask,
         submitTaskForReview,
         approveTaskReview,
         requestChangesReview,
         deleteTask,
-        // Personal tasks actions
+        // Personal tasks
         createPersonalTask,
         updatePersonalTask,
         togglePersonalTaskStatus,
         deletePersonalTask,
-        // Comments & Attachments
+        // Comments & attachments
         addComment,
         addAttachment,
+        getAttachmentUrl,
         logActivity,
       }}
     >

@@ -1,4 +1,10 @@
 import React, { useState } from 'react';
+import { CalendarClock, BookOpen, MessagesSquare } from 'lucide-react';
+import { StudySessionsPage } from '@/pages/study/StudySessionsPage';
+import { ResourcesPage } from '@/pages/study/ResourcesPage';
+import { QABoardPage } from '@/pages/study/QABoardPage';
+import { StatCard } from '@/components/ui/StatCard';
+import { chartTooltipStyle, chartTick, chartCursor } from '@/lib/chartTheme';
 import {
   FolderKanban,
   Users2,
@@ -11,7 +17,8 @@ import {
   Sparkles,
   Calendar,
   CheckCircle2,
-  Clock
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -47,8 +54,8 @@ export function TeamWorkspace({
   onOpenNewTaskModal,
   onOpenNewProjectModal
 }) {
-  const { teams, projects, tasks, teamMembers, profiles, activity, getProjectProgress, getTeamStats } = useData();
-  const { user, role } = useAuth();
+  const { teams, projects, tasks, teamMembers, profiles, activity, getProjectProgress, getTeamStats, isMemberOf } = useData();
+  const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'members' | 'projects' | 'tasks' | 'workload' | 'activity' | 'reports'
 
@@ -57,8 +64,8 @@ export function TeamWorkspace({
   if (!team) {
     return (
       <div className="p-8 text-center">
-        <p className="text-slate-500">Team not found.</p>
-        <Button onClick={onBackToTeams} className="mt-4">Back to Teams</Button>
+        <p className="text-slate-500">Study group not found.</p>
+        <Button onClick={onBackToTeams} className="mt-4">Back to Study Groups</Button>
       </div>
     );
   }
@@ -72,25 +79,28 @@ export function TeamWorkspace({
   const stats = getTeamStats(team.id);
 
   const tabs = [
-    { id: 'dashboard', label: 'Team Dashboard', icon: LayoutDashboard },
-    { id: 'projects', label: `Projects (${teamProjects.length})`, icon: FolderKanban },
+    { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+    { id: 'projects', label: `Subjects (${teamProjects.length})`, icon: FolderKanban },
     { id: 'tasks', label: `Tasks (${teamTasks.length})`, icon: CheckSquare },
-    { id: 'workload', label: 'Workload Balancer', icon: Sparkles },
+    { id: 'sessions', label: 'Sessions', icon: CalendarClock },
+    { id: 'resources', label: 'Resources', icon: BookOpen },
+    { id: 'qa', label: 'Q&A', icon: MessagesSquare },
     { id: 'members', label: 'Members', icon: Users2 },
-    { id: 'activity', label: 'Activity Feed', icon: Activity },
-    { id: 'reports', label: 'Team Reports', icon: BarChart2 },
+    { id: 'workload', label: 'Workload', icon: Sparkles },
+    { id: 'activity', label: 'Activity', icon: Activity },
+    { id: 'reports', label: 'Reports', icon: BarChart2 },
   ];
 
   return (
     <div className="space-y-6">
       {/* Team Header Banner */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
+      <div className="bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <button
               onClick={onBackToTeams}
               className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="Back to all teams"
+              title="Back to all study groups"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
@@ -103,7 +113,7 @@ export function TeamWorkspace({
                 <Badge variant="primary">Active Workspace</Badge>
               </div>
               <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                {team.description || "Centralized hub for all team projects, subtasks, and collaboration."}
+                {team.description || "Subjects, tasks, sessions, resources and questions for this group."}
               </p>
             </div>
           </div>
@@ -113,10 +123,10 @@ export function TeamWorkspace({
               <Plus className="w-4 h-4" />
               New Task
             </Button>
-            {(role === 'team_leader' || role === 'admin') && (
+            {isMemberOf(team.id) && (
               <Button size="sm" variant="outline" onClick={() => onOpenNewProjectModal(team.id)} className="gap-1.5 text-xs">
                 <Plus className="w-4 h-4" />
-                New Project
+                New Subject
               </Button>
             )}
           </div>
@@ -150,30 +160,16 @@ export function TeamWorkspace({
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Active Projects</span>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{stats.activeProjectsCount}</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Team Completion</span>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{stats.completionPercentage}%</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">In Progress Tasks</span>
-              <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">{stats.inProgressCount}</p>
-            </div>
-            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Overdue Tasks</span>
-              <p className={cn("text-2xl font-bold mt-1", stats.overdueCount > 0 ? "text-rose-600" : "text-slate-800 dark:text-slate-200")}>
-                {stats.overdueCount}
-              </p>
-            </div>
+            <StatCard index={0} label="Active Subjects" value={stats.activeProjectsCount} hint={`${stats.totalProjectsCount} total`} icon={FolderKanban} tone="brown" />
+            <StatCard index={1} label="Group Completion" value={stats.completionPercentage} suffix="%" hint={`${stats.completedCount} of ${stats.totalTasksCount} tasks`} icon={CheckCircle2} tone="moss" progress={stats.completionPercentage} />
+            <StatCard index={2} label="In Progress" value={stats.inProgressCount} hint={`${stats.underReviewCount} under review`} icon={Clock} tone="teal" />
+            <StatCard index={3} label="Overdue Tasks" value={stats.overdueCount} hint={stats.overdueCount > 0 ? 'Needs attention' : 'All on schedule'} icon={AlertTriangle} tone={stats.overdueCount > 0 ? 'terracotta' : 'neutral'} />
           </div>
 
-          {/* Active Projects in Team */}
+          {/* Active Subjects in Team */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-3">
-              <CardTitle className="text-base">Team Projects</CardTitle>
+              <CardTitle className="text-base">Subjects</CardTitle>
               <Button size="sm" variant="ghost" onClick={() => setActiveTab('projects')} className="text-xs text-primary-600">
                 View all projects &rarr;
               </Button>
@@ -205,11 +201,11 @@ export function TeamWorkspace({
       {/* TAB 2: PROJECTS */}
       {activeTab === 'projects' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {teamProjects.map((proj) => {
+          {teamProjects.map((proj, i) => {
             const progress = getProjectProgress(proj.id);
             const projTasks = tasks.filter(t => t.project_id === proj.id);
             return (
-              <Card key={proj.id} className="p-5 hover:border-primary-400 transition-all cursor-pointer" onClick={() => onOpenProject(proj.id)}>
+              <Card key={proj.id} index={i} className="p-5" onClick={() => onOpenProject(proj.id)}>
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div>
                     <h3 className="font-bold text-base text-slate-900 dark:text-white">{proj.name}</h3>
@@ -247,7 +243,7 @@ export function TeamWorkspace({
               <div
                 key={t.id}
                 onClick={() => onOpenTaskDetails(t.id)}
-                className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between gap-4 hover:border-primary-400 cursor-pointer transition-all"
+                className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-slate-900 flex items-center justify-between gap-4 hover:border-primary-400 cursor-pointer transition-all"
               >
                 <div className="min-w-0 flex-1">
                   <h4 className="text-xs font-semibold text-slate-900 dark:text-white truncate">{t.title}</h4>
@@ -268,12 +264,16 @@ export function TeamWorkspace({
       )}
 
       {/* TAB 4: WORKLOAD BALANCER */}
+      {activeTab === 'sessions' && <StudySessionsPage teamId={team.id} />}
+      {activeTab === 'resources' && <ResourcesPage teamId={team.id} />}
+      {activeTab === 'qa' && <QABoardPage teamId={team.id} />}
+
       {activeTab === 'workload' && (
         <Card className="p-6">
           <div className="mb-4">
             <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary-600" />
-              Smart Team Workload Balancer
+              Smart Group Workload Balancer
             </h3>
             <p className="text-xs text-slate-500 mt-1">
               Rule-based capacity matrix analyzing active tasks, overdue workload, and recommending optimal assignees.
@@ -294,7 +294,7 @@ export function TeamWorkspace({
           <CardTitle className="text-base mb-4">Workspace Activity Feed</CardTitle>
           <div className="space-y-3">
             {teamActivity.length === 0 ? (
-              <p className="text-xs text-slate-400 italic text-center py-6">No activity logged for this team yet.</p>
+              <p className="text-xs text-slate-400 italic text-center py-6">No activity in this group yet.</p>
             ) : (
               teamActivity.map((act) => {
                 const actor = profiles.find(p => p.id === act.user_id);
@@ -319,17 +319,17 @@ export function TeamWorkspace({
       {/* TAB 7: REPORTS */}
       {activeTab === 'reports' && (
         <Card className="p-6">
-          <CardTitle className="text-base mb-2">Team Velocity & Completion Report</CardTitle>
-          <p className="text-xs text-slate-500 mb-6">Aggregate performance metrics across all projects in this workspace.</p>
+          <CardTitle className="text-base mb-2">Group Progress Report</CardTitle>
+          <p className="text-xs text-slate-500 mb-6">How the group is doing across all its subjects.</p>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={teamProjects.map(p => ({ name: p.name.substring(0, 14), progress: getProjectProgress(p.id) }))}
               >
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                <RechartsTooltip formatter={(val) => [`${val}%`, 'Progress']} />
-                <Bar dataKey="progress" fill="#4F46E5" radius={[6, 6, 0, 0]} />
+                <XAxis dataKey="name" tick={chartTick} stroke="#D2B48C" />
+                <YAxis domain={[0, 100]} unit="%" tick={chartTick} stroke="#D2B48C" />
+                <RechartsTooltip contentStyle={chartTooltipStyle} cursor={chartCursor} formatter={(val) => [`${val}%`, 'Progress']} />
+                <Bar dataKey="progress" fill="#7B3F00" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

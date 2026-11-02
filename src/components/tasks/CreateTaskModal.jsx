@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Sparkles, Calendar, Layers } from 'lucide-react';
 
 export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, initialTeamId = null, initialParentTaskId = null }) {
-  const { teams, projects, tasks, teamMembers, profiles, createTask } = useData();
+  const { memberTeams: teams, projects, tasks, teamMembers, profiles, createTask, isMemberOf } = useData();
   const { user } = useAuth();
 
   const [title, setTitle] = useState('');
@@ -23,8 +23,10 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
   const [dueDate, setDueDate] = useState('');
   const [showWorkloadBalancer, setShowWorkloadBalancer] = useState(false);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const isLeader = role === 'team_leader' || role === 'admin';
+  // Anyone in the selected group can assign the task to any member of it.
+  const isLeader = isMemberOf(teamId);
 
   useEffect(() => {
     if (isOpen) {
@@ -34,44 +36,53 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
       setTeamId(defaultTeamId);
       setProjectId(initialProjectId || '');
       setParentTaskId(initialParentTaskId || '');
-      setAssignedTo(isLeader ? (user?.id || '') : user?.id);
+      setAssignedTo(user?.id || '');
       setPriority('Medium');
       setStartDate(new Date().toISOString().split('T')[0]);
       setDueDate('');
       setShowWorkloadBalancer(false);
       setError('');
     }
-  }, [isOpen, initialProjectId, initialTeamId, initialParentTaskId, teams, user, isLeader]);
+    // Reset only when the modal opens, not on every data change.
+  }, [isOpen, initialProjectId, initialTeamId, initialParentTaskId]);
 
   const filteredProjects = teamId ? projects.filter(p => p.team_id === teamId) : projects;
   const filteredParentTasks = projectId ? tasks.filter(t => t.project_id === projectId && !t.parent_task_id) : [];
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title.trim()) {
       setError('Task title is required.');
       return;
     }
     if (!teamId) {
-      setError('Please select a team.');
+      setError('Please choose a study group.');
       return;
     }
 
-    createTask({
+    if (dueDate && startDate && dueDate < startDate) {
+      setError('Due date cannot be before the start date.');
+      return;
+    }
+
+    setSaving(true);
+    const created = await createTask({
       title: title.trim(),
       description: description.trim(),
       team_id: teamId,
       project_id: projectId || null,
       parent_task_id: parentTaskId || null,
-      assigned_to: assignedTo || null,
+      assigned_to: isLeader ? (assignedTo || null) : user?.id,
       priority,
       status: 'To Do',
       progress: 0,
       start_date: startDate,
       due_date: dueDate,
     });
+    setSaving(false);
 
-    onClose();
+    if (created) onClose();
+    else setError('The task could not be saved. Check the message in the corner and try again.');
   };
 
   return (
@@ -79,13 +90,19 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
       isOpen={isOpen}
       onClose={onClose}
       title={parentTaskId ? "Add Subtask" : "Create New Task"}
-      description="Assign work, set deadlines, and balance team bandwidth."
+      description="Share study work, set deadlines and spread it fairly across the group."
       size="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="p-3 text-xs text-rose-600 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800">
             {error}
+          </div>
+        )}
+
+        {teams.length === 0 && (
+          <div className="p-3 text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/40 rounded-lg border border-amber-200 dark:border-amber-800">
+            You need to be in a team to create team tasks. Use My Tasks for personal to-dos.
           </div>
         )}
 
@@ -106,13 +123,13 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
             placeholder="Provide context, acceptance criteria, or technical details..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3.5 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+            className="w-full px-3.5 py-2 text-sm bg-surface dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
           />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Select
-            label="Assigned Team *"
+            label="Study Group *"
             value={teamId}
             onChange={(e) => {
               setTeamId(e.target.value);
@@ -128,14 +145,14 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
           </Select>
 
           <Select
-            label="Project (Optional)"
+            label="Subject (optional)"
             value={projectId}
             onChange={(e) => {
               setProjectId(e.target.value);
               setParentTaskId('');
             }}
           >
-            <option value="">No Project (Standalone Task)</option>
+            <option value="">No subject</option>
             {filteredProjects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -160,7 +177,7 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
           </Select>
         )}
 
-        {/* Workload Balancer Integration (Leaders & Admins) */}
+        {/* Workload balancer and assignee picker (any group member) */}
         {isLeader && (
           <div className="border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50/50 dark:bg-slate-800/30">
             <div className="flex items-center justify-between mb-2">
@@ -173,7 +190,7 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
                 onClick={() => setShowWorkloadBalancer(!showWorkloadBalancer)}
                 className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
               >
-                {showWorkloadBalancer ? "Hide Capacity Breakdown" : "View Team Capacity"}
+                {showWorkloadBalancer ? "Hide Capacity Breakdown" : "View group workload"}
               </button>
             </div>
 
@@ -199,7 +216,7 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
                   const profile = profiles.find(p => p.id === tm.user_id);
                   return (
                     <option key={tm.id} value={tm.user_id}>
-                      {profile?.full_name || 'Member'} ({tm.role})
+                      {profile?.full_name || 'Member'}{tm.role === 'member' ? '' : ' (organizer)'}
                     </option>
                   );
                 })}
@@ -216,7 +233,7 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
               {user?.full_name} (Self-assigned)
             </p>
             <p className="text-[10px] text-slate-400 mt-0.5">
-              Team members create tasks assigned to themselves. Team Leaders can reassign tasks.
+              You can assign tasks once you are a member of this group.
             </p>
           </div>
         )}
@@ -252,8 +269,8 @@ export function CreateTaskModal({ isOpen, onClose, initialProjectId = null, init
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit">
-            Create Task
+          <Button type="submit" disabled={saving || teams.length === 0}>
+            {saving ? 'Saving...' : 'Create Task'}
           </Button>
         </div>
       </form>

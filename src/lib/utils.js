@@ -5,10 +5,41 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
+// Database ids are UUIDs, so new records get a real UUID on the client.
+// That lets the UI show a record instantly and save it with the same id.
+export function newId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// Empty form fields come through as "", which Postgres rejects for DATE columns.
+export function emptyToNull(value) {
+  return value === "" || value === undefined ? null : value;
+}
+
+export function humanizeAction(action) {
+  return (action || "").replace(/_/g, " ");
+}
+
+// "2026-11-02" is parsed by Date as UTC midnight, which can land on the
+// previous day in western timezones. Read date-only strings as local dates.
+export function parseDate(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [y, m, d] = value.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return new Date(value);
+}
+
 export function formatDate(dateString) {
   if (!dateString) return "No date";
   try {
-    const date = new Date(dateString);
+    const date = parseDate(dateString);
     if (isNaN(date.getTime())) return dateString;
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -39,7 +70,7 @@ export function formatTimeAgo(dateString) {
 export function isOverdue(dueDate, status) {
   if (!dueDate) return false;
   if (status === "Completed") return false;
-  const due = new Date(dueDate);
+  const due = parseDate(dueDate);
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   return due < now;
@@ -47,7 +78,7 @@ export function isOverdue(dueDate, status) {
 
 export function isDueToday(dueDate) {
   if (!dueDate) return false;
-  const due = new Date(dueDate);
+  const due = parseDate(dueDate);
   const now = new Date();
   return (
     due.getDate() === now.getDate() &&

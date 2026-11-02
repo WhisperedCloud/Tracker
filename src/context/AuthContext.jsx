@@ -1,230 +1,168 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 const AuthContext = createContext();
 
+// Every account is the same; there are no admin or leader accounts.
+
+async function fetchOrCreateProfile(authUser) {
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', authUser.id)
+    .maybeSingle();
+
+  if (profile) return profile;
+  if (error) console.warn('Could not load profile:', error.message);
+
+  // The sign-up trigger normally creates the profile. If it is missing
+  // (for example the account predates the trigger), create it now.
+  const fallback = {
+    id: authUser.id,
+    email: (authUser.email || '').toLowerCase(),
+    full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
+    role: 'team_member',
+    avatar_url: authUser.user_metadata?.avatar_url || '',
+  };
+  const { data: created, error: insertError } = await supabase
+    .from('profiles')
+    .upsert(fallback)
+    .select()
+    .maybeSingle();
+  if (insertError) console.warn('Could not create profile:', insertError.message);
+  return created || fallback;
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('tasksync_user');
-    if (savedUser) {
-      try {
-        return JSON.parse(savedUser);
-      } catch (e) {
-        console.error("Failed to parse saved user", e);
-      }
-    }
-    return null; // Clean initial state: no mock user
-  });
-
+  const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(isSupabaseConfigured);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      localStorage.setItem('tasksync_user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('tasksync_user');
-    }
-  }, [user]);
+    if (!isSupabaseConfigured) return undefined;
 
-  useEffect(() => {
-    async function initAuth() {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const { data: { session: currentSession } } = await supabase.auth.getSession();
-          setSession(currentSession);
-          if (currentSession?.user) {
-            // Fetch profile from public.profiles
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', currentSession.user.id)
-              .single();
+    // onAuthStateChange fires INITIAL_SESSION right away, so it covers page load too.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      setSession(newSession);
+      if (event === 'PASSWORD_RECOVERY') setIsPasswordRecovery(true);
 
-            if (profile) {
-              setUser(profile);
-            } else {
-              const fallbackUser = {
-                id: currentSession.user.id,
-                email: currentSession.user.email,
-                full_name: currentSession.user.user_metadata?.full_name || currentSession.user.email?.split('@')[0] || 'User',
-                role: currentSession.user.user_metadata?.role || 'team_member',
-                avatar_url: currentSession.user.user_metadata?.avatar_url || '',
-              };
-              setUser(fallbackUser);
-              supabase.from('profiles').upsert(fallbackUser).then();
-            }
-          } else {
-            setUser(null);
-          }
-        } catch (err) {
-          console.warn('Error fetching Supabase session:', err);
-          setUser(null);
-        }
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-          setSession(newSession);
-          if (newSession?.user) {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', newSession.user.id)
-              .single();
-            if (profile) {
-              setUser(profile);
-            } else {
-              const fallbackUser = {
-                id: newSession.user.id,
-                email: newSession.user.email,
-                full_name: newSession.user.user_metadata?.full_name || newSession.user.email?.split('@')[0] || 'User',
-                role: newSession.user.user_metadata?.role || 'team_member',
-                avatar_url: newSession.user.user_metadata?.avatar_url || '',
-              };
-              setUser(fallbackUser);
-              supabase.from('profiles').upsert(fallbackUser).then();
-            }
-          } else if (event === 'SIGNED_OUT') {
-            setUser(null);
-            localStorage.removeItem('tasksync_user');
-          }
-        });
-
+      if (!newSession?.user) {
+        setUser(null);
         setLoading(false);
-        return () => subscription?.unsubscribe();
-      } else {
-        setLoading(false);
+        return;
       }
-    }
 
-    initAuth();
+      // Supabase warns against awaiting its own calls inside this callback
+      // (it can deadlock), so load the profile on the next tick.
+      const authUser = newSession.user;
+      setTimeout(async () => {
+        const profile = await fetchOrCreateProfile(authUser);
+        setUser(profile);
+        setLoading(false);
+      }, 0);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email, password) => {
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      if (data?.user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-        if (profile) {
-          setUser(profile);
-        } else {
-          const fallbackUser = {
-            id: data.user.id,
-            email: data.user.email,
-            full_name: data.user.user_metadata?.full_name || email.split('@')[0],
-            role: data.user.user_metadata?.role || 'team_member',
-            avatar_url: data.user.user_metadata?.avatar_url || '',
-          };
-          setUser(fallbackUser);
-          supabase.from('profiles').upsert(fallbackUser).then();
-        }
-      }
-      return data;
-    }
-    throw new Error('Supabase client not initialized.');
+  const requireClient = () => {
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured. Add your keys to .env.');
   };
 
-  const signup = async (fullName, email, password, role = 'team_member') => {
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            role: role
-          },
-          emailRedirectTo: `${window.location.origin}/`,
-        }
-      });
-      if (error) throw error;
+  const login = async (email, password) => {
+    requireClient();
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw error;
+    return data;
+  };
 
-      // Automatically sync profile to public.profiles if user was created
-      if (data?.user) {
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            full_name: fullName,
-            email: email,
-            role: role,
-            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName)}`
-          });
-        } catch (e) {
-          console.warn("Profile table sync warning:", e);
-        }
-      }
-
-      return data;
-    }
-    throw new Error('Supabase client not initialized.');
+  const signup = async (fullName, email, password) => {
+    requireClient();
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName.trim())}`,
+        },
+        emailRedirectTo: `${window.location.origin}/`,
+      },
+    });
+    if (error) throw error;
+    return data;
   };
 
   const resendVerification = async (email) => {
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.resend({
-        type: 'signup',
-        email,
-      });
-      if (error) throw error;
-      return data;
-    }
-    throw new Error('Supabase client not initialized.');
+    requireClient();
+    const { data, error } = await supabase.auth.resend({ type: 'signup', email: email.trim() });
+    if (error) throw error;
+    return data;
   };
 
   const logout = async () => {
-    if (isSupabaseConfigured && supabase) {
-      await supabase.auth.signOut();
-    }
+    if (isSupabaseConfigured) await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('tasksync_user');
+    setSession(null);
   };
 
   const forgotPassword = async (email) => {
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) throw error;
-      return data;
-    }
-    throw new Error('Supabase client not initialized.');
+    requireClient();
+    // The link brings the user back to the app, which then fires PASSWORD_RECOVERY.
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (error) throw error;
+    return data;
   };
 
-  const updateProfile = async (updates) => {
-    const updated = { ...user, ...updates };
+  const updatePassword = async (newPassword) => {
+    requireClient();
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    setIsPasswordRecovery(false);
+  };
+
+  // Only name and avatar are editable.
+  const updateProfile = async ({ full_name, avatar_url }) => {
+    requireClient();
+    const updates = { full_name, avatar_url };
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', user.id)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    const updated = data || { ...user, ...updates };
     setUser(updated);
-    if (isSupabaseConfigured && supabase && user?.id) {
-      await supabase.from('profiles').update(updates).eq('id', user.id);
-    }
     return updated;
   };
 
-  const role = user?.role || 'team_member';
-  const isAdmin = role === 'admin';
-  const isLeader = role === 'team_leader' || role === 'admin';
-  const isMember = role === 'team_member';
+  const refreshProfile = useCallback(async () => {
+    if (!session?.user) return;
+    const profile = await fetchOrCreateProfile(session.user);
+    setUser(profile);
+  }, [session?.user]);
+
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        role,
-        isAdmin,
-        isLeader,
-        isMember,
         session,
         loading,
         isAuthenticated: Boolean(user),
+        isPasswordRecovery,
         login,
         signup,
         resendVerification,
         logout,
         forgotPassword,
+        updatePassword,
         updateProfile,
+        refreshProfile,
       }}
     >
       {children}

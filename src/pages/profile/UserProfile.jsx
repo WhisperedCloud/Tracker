@@ -9,23 +9,37 @@ import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
 
 export function UserProfile() {
-  const { user, role, updateProfile } = useAuth();
+  const { user, updateProfile } = useAuth();
   const { getMemberWorkload } = useData();
 
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const workload = user ? getMemberWorkload(user.id) : null;
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
-    updateProfile({
-      full_name: fullName.trim(),
-      avatar_url: avatarUrl.trim()
-    });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    setSaveError('');
+    if (!fullName.trim()) {
+      setSaveError('Name cannot be empty.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateProfile({
+        full_name: fullName.trim(),
+        avatar_url: avatarUrl.trim()
+      });
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err) {
+      setSaveError(err.message || 'Could not save your profile.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -46,11 +60,6 @@ export function UserProfile() {
           <div>
             <h3 className="font-bold text-lg text-slate-900 dark:text-white">{fullName || user?.full_name}</h3>
             <p className="text-xs text-slate-400 mt-0.5">{user?.email}</p>
-            <div className="mt-2.5">
-              <Badge variant="primary" className="capitalize">
-                {role?.replace('_', ' ')}
-              </Badge>
-            </div>
           </div>
 
           {workload && (
@@ -84,6 +93,12 @@ export function UserProfile() {
               </div>
             )}
 
+            {saveError && (
+              <div className="p-3 mb-4 text-xs text-rose-700 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg">
+                {saveError}
+              </div>
+            )}
+
             <form onSubmit={handleSave} className="space-y-4">
               <Input
                 label="Full Name"
@@ -107,9 +122,9 @@ export function UserProfile() {
               />
 
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-                <Button type="submit" className="gap-1.5 shadow-sm text-xs">
+                <Button type="submit" className="gap-1.5 shadow-sm text-xs" disabled={saving}>
                   <Save className="w-4 h-4" />
-                  Save Changes
+                  {saving ? 'Saving...' : 'Save Changes'}
                 </Button>
               </div>
             </form>

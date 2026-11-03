@@ -1,0 +1,15 @@
+{
+  "appId": "com.tasksync.app",
+  "appName": "TaskSync",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "style": "DEFAULT"
+    }
+  }
+}

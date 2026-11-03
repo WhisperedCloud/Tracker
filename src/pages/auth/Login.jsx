@@ -6,7 +6,7 @@ import { CheckCircle2, Lock, Mail, AlertCircle, RotateCcw, ArrowRight } from 'lu
 import { useAuth } from '@/context/AuthContext';
 
 export function Login({ onNavigateRegister, onNavigateForgot }) {
-  const { login, resendVerification } = useAuth();
+  const { login, resendVerification, linkError, clearLinkError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -65,6 +65,14 @@ export function Login({ onNavigateRegister, onNavigateForgot }) {
 
         {/* Card Form */}
         <div className="bg-surface dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none space-y-5">
+          {linkError && !error && (
+            <div role="alert" className="p-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="flex-1">{linkError}</span>
+              <button type="button" onClick={clearLinkError} className="font-semibold underline shrink-0">Dismiss</button>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 text-xs text-rose-600 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg space-y-2">
               <div className="flex items-start gap-2">

@@ -14,6 +14,13 @@ function handleGlobalKeyDown(event) {
   top.onEscape?.();
 }
 
+/** Closes the top-most open overlay, as Escape would. Returns false when none is open. */
+export function closeTopLayer() {
+  if (layers.length === 0) return false;
+  layers[layers.length - 1].onEscape?.();
+  return true;
+}
+
 export function useLayer(active, onEscape) {
   const onEscapeRef = useRef(onEscape);
   onEscapeRef.current = onEscape;

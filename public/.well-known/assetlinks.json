@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.tasksync.app",
+      "sha256_cert_fingerprints": [
+        "3B:C4:B9:62:B2:42:53:8A:CA:9C:72:25:73:BE:EF:A4:40:F7:EC:4A:83:D7:69:6E:FE:6A:7B:B3:F1:79:98:CD"
+      ]
+    }
+  }
+]

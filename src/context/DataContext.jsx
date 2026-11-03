@@ -5,6 +5,7 @@ import { isOverdue, getWorkloadLevel, newId, emptyToNull } from '@/lib/utils';
 import { sendEmail } from '@/lib/email';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './NotificationContext';
+import { siteLink } from '@/lib/platform';
 
 const DataContext = createContext();
 
@@ -396,7 +397,7 @@ export function DataProvider({ children }) {
       notifyByEmail('invitation_created', { invitation_id: already.id });
       return {
         status: 'invited',
-        link: `${window.location.origin}/?invite=${already.invitation_token}`,
+        link: siteLink(`/?invite=${already.invitation_token}`),
         message: `${normalized} was already invited, so the invitation email was sent again.`,
       };
     }
@@ -421,7 +422,7 @@ export function DataProvider({ children }) {
     notifyByEmail('invitation_created', { invitation_id: invite.id });
     return {
       status: 'invited',
-      link: `${window.location.origin}/?invite=${invite.invitation_token}`,
+      link: siteLink(`/?invite=${invite.invitation_token}`),
       message: `${normalized} has no account yet, so an invitation email is on its way. You can also share this link; after signing up with that email they can accept.`,
     };
   };

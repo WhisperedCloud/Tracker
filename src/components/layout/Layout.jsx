@@ -62,15 +62,37 @@ export function Layout() {
 
   // Invite links look like /?invite=<token>. Open the Teams page, where the
   // pending invitation is shown with Accept / Decline, and tidy the URL.
+  // In the Android app an invite link can also arrive while the app is open.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('invite')) {
+    const openInvite = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has('invite')) return;
+      setSelectedTeamId(null);
       setCurrentTab('teams');
       params.delete('invite');
       const query = params.toString();
       window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
-    }
+    };
+    openInvite();
+    window.addEventListener('tasksync:invite', openInvite);
+    return () => window.removeEventListener('tasksync:invite', openInvite);
   }, []);
+
+  // Android Back button (sent by src/lib/native.js once no popup is open):
+  // close the menu, leave a group or subject page, then return to the dashboard.
+  useEffect(() => {
+    const onBack = (event) => {
+      if (isMobileOpen) setIsMobileOpen(false);
+      else if (currentTab === 'teams' && selectedTeamId) setSelectedTeamId(null);
+      else if (currentTab === 'projects' && selectedProjectId) setSelectedProjectId(null);
+      else if (currentTab !== 'dashboard') setCurrentTab('dashboard');
+      else return;
+      event.preventDefault();
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('tasksync:back', onBack);
+    return () => window.removeEventListener('tasksync:back', onBack);
+  }, [isMobileOpen, currentTab, selectedTeamId, selectedProjectId]);
 
   const isErrorToast = toastNotification?.type === 'error';
 

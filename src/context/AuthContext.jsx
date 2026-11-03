@@ -1,7 +1,27 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { App as NativeApp } from '@capacitor/app';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { isNativeApp, siteLink } from '@/lib/platform';
 
 const AuthContext = createContext();
+
+// Supabase puts the result of an email link in the URL: tokens on success,
+// error_description when the link is used up or expired.
+function readLinkParams(url) {
+  const u = new URL(url);
+  const params = new URLSearchParams(u.hash.replace(/^#/, ''));
+  u.searchParams.forEach((value, key) => { if (!params.has(key)) params.set(key, value); });
+  return params;
+}
+
+function linkErrorMessage(params) {
+  const description = params.get('error_description');
+  if (!description) return '';
+  if (params.get('error_code') === 'otp_expired') {
+    return 'That email link has expired or was already used. Sign in, or ask for a new link below.';
+  }
+  return description;
+}
 
 // Every account is the same; there are no admin or leader accounts.
 
@@ -38,6 +58,12 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  // Shown on the sign-in screen when an email link failed (for example it expired).
+  const [linkError, setLinkError] = useState(() =>
+    typeof window !== 'undefined' && window.location.hash.includes('error_description')
+      ? linkErrorMessage(readLinkParams(window.location.href))
+      : ''
+  );
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
@@ -66,6 +92,51 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // In the Android app, email links (verify email, reset password, invites) open the app
+  // through Android App Links. The browser would read the tokens from the URL by itself;
+  // the app has to hand them to Supabase.
+  useEffect(() => {
+    if (!isSupabaseConfigured || !isNativeApp) return undefined;
+    let cancelled = false;
+    const handled = new Set();
+
+    const handleUrl = async (url) => {
+      if (!url || handled.has(url)) return;
+      handled.add(url);
+      let params;
+      try { params = readLinkParams(url); } catch { return; }
+
+      const message = linkErrorMessage(params);
+      if (message) { setLinkError(message); return; }
+
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      if (accessToken && refreshToken) {
+        if (params.get('type') === 'recovery') setIsPasswordRecovery(true);
+        const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (error) setLinkError(error.message);
+        else setLinkError('');
+      } else if (params.get('code')) {
+        const { error } = await supabase.auth.exchangeCodeForSession(params.get('code'));
+        if (error) setLinkError(error.message);
+      }
+
+      const invite = params.get('invite');
+      if (invite) {
+        window.history.replaceState({}, '', `/?invite=${encodeURIComponent(invite)}`);
+        window.dispatchEvent(new Event('tasksync:invite'));
+      }
+    };
+
+    const listener = NativeApp.addListener('appUrlOpen', ({ url }) => handleUrl(url));
+    NativeApp.getLaunchUrl().then((launch) => { if (!cancelled && launch?.url) handleUrl(launch.url); }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      listener.then((l) => l.remove()).catch(() => {});
+    };
+  }, []);
+
   const requireClient = () => {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured. Add your keys to .env.');
   };
@@ -74,6 +145,7 @@ export function AuthProvider({ children }) {
     requireClient();
     const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (error) throw error;
+    setLinkError('');
     return data;
   };
 
@@ -87,7 +159,7 @@ export function AuthProvider({ children }) {
           full_name: fullName.trim(),
           avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(fullName.trim())}`,
         },
-        emailRedirectTo: `${window.location.origin}/`,
+        emailRedirectTo: siteLink('/'),
       },
     });
     if (error) throw error;
@@ -96,7 +168,11 @@ export function AuthProvider({ children }) {
 
   const resendVerification = async (email) => {
     requireClient();
-    const { data, error } = await supabase.auth.resend({ type: 'signup', email: email.trim() });
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email.trim(),
+      options: { emailRedirectTo: siteLink('/') },
+    });
     if (error) throw error;
     return data;
   };
@@ -111,7 +187,7 @@ export function AuthProvider({ children }) {
     requireClient();
     // The link brings the user back to the app, which then fires PASSWORD_RECOVERY.
     const { data, error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo: siteLink('/'),
     });
     if (error) throw error;
     return data;
@@ -155,6 +231,8 @@ export function AuthProvider({ children }) {
         loading,
         isAuthenticated: Boolean(user),
         isPasswordRecovery,
+        linkError,
+        clearLinkError: () => setLinkError(''),
         login,
         signup,
         resendVerification,

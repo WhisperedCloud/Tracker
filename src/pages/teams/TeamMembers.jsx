@@ -23,6 +23,7 @@ import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { useDialog } from '@/components/ui/DialogProvider';
 import { formatDate, cn } from '@/lib/utils';
+import { siteLink } from '@/lib/platform';
 
 export function TeamMembers({ teamId }) {
   const {
@@ -234,7 +235,7 @@ export function TeamMembers({ teamId }) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => navigator.clipboard.writeText(`${window.location.origin}/?invite=${inv.invitation_token}`)}
+                    onClick={() => navigator.clipboard.writeText(siteLink(`/?invite=${inv.invitation_token}`))}
                     className="text-primary-600 dark:text-primary-400 font-semibold hover:underline"
                   >
                     Copy link

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -38,6 +38,17 @@ VITE_SUPABASE_ANON_KEY=your-anon-key`}
 function AuthenticatedApp() {
   const { isAuthenticated, loading, isPasswordRecovery } = useAuth();
   const [authView, setAuthView] = useState('login'); // 'login' | 'register' | 'forgot'
+
+  // Android Back on the sign-up or forgot-password screen returns to sign-in.
+  useEffect(() => {
+    const onBack = (event) => {
+      if (authView === 'login') return;
+      setAuthView('login');
+      event.preventDefault();
+    };
+    window.addEventListener('tasksync:back', onBack);
+    return () => window.removeEventListener('tasksync:back', onBack);
+  }, [authView]);
 
   if (!isSupabaseConfigured) return <SetupRequired />;
 

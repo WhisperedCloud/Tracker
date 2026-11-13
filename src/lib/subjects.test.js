@@ -7,6 +7,7 @@ import {
   statusChange,
   applyCustomOrder,
   sortSubjects,
+  sortTasks,
   moveItem,
   mergeVisibleOrder,
 } from './subjects';
@@ -108,4 +109,17 @@ describe('moving subjects', () => {
     // full: a b c d e, visible: b d e (a and c hidden), user moves e to the top
     expect(mergeVisibleOrder(['a', 'b', 'c', 'd', 'e'], ['e', 'b', 'd'])).toEqual(['a', 'e', 'c', 'b', 'd']);
   });
+});
+
+describe('task sorting (same options on the subject page)', () => {
+  const tasks = [
+    { id: 't1', title: 'Section 10 revision', priority: 'Low', due_date: '2026-12-05', created_at: '2026-01-01' },
+    { id: 't2', title: 'Section 2 notes', priority: 'Urgent', due_date: null, created_at: '2026-01-02' },
+    { id: 't3', title: 'Section 1 summary', priority: 'High', due_date: '2026-11-20', created_at: '2026-01-03' },
+  ];
+  const order = ['t2', 't1', 't3'];
+  it('custom follows the saved order', () => expect(ids(sortTasks(tasks, 'custom', order))).toEqual(['t2', 't1', 't3']));
+  it('name sorts by title with numbers in natural order', () => expect(ids(sortTasks(tasks, 'name', order))).toEqual(['t3', 't2', 't1']));
+  it('priority high to low', () => expect(ids(sortTasks(tasks, 'priority', order))).toEqual(['t2', 't3', 't1']));
+  it('due date soonest first, none last', () => expect(ids(sortTasks(tasks, 'due', order))).toEqual(['t3', 't1', 't2']));
 });

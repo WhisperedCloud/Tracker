@@ -1035,3 +1035,9 @@ CREATE POLICY "Users edit their own logs"
     ON public.study_logs FOR UPDATE TO authenticated
     USING (user_id = auth.uid())
     WITH CHECK (user_id = auth.uid() AND (team_id IS NULL OR public.is_team_member(team_id)));
+
+-- ---------------------------------------------------------------------------
+-- Custom task order, per person (also in supabase/migrations/20261114_task_order.sql)
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    ADD COLUMN IF NOT EXISTS task_order UUID[] NOT NULL DEFAULT '{}';

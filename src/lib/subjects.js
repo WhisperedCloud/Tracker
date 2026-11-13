@@ -68,20 +68,36 @@ export function applyCustomOrder(projects, order = []) {
 
 const dueValue = (p) => (p.due_date ? p.due_date : '9999-12-31');
 
-export function sortSubjects(projects, sortBy, order) {
-  const custom = applyCustomOrder(projects, order);
-  const list = [...custom];
+// Sort subjects or tasks the same way. `order` is the person's saved custom
+// order (ids); `nameOf` reads the name to sort A–Z.
+export function sortItems(items, sortBy, order, nameOf = (x) => x.name) {
+  const list = [...applyCustomOrder(items, order)];
   switch (sortBy) {
     case 'name':
-      return list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      return list.sort((a, b) => String(nameOf(a) || '').localeCompare(String(nameOf(b) || ''), undefined, { sensitivity: 'base', numeric: true }));
     case 'priority':
       return list.sort((a, b) => (PRIORITY_RANK[b.priority] || 0) - (PRIORITY_RANK[a.priority] || 0));
     case 'due':
-      // Earliest deadline first; subjects with no deadline go last.
+      // Earliest deadline first; items with no deadline go last.
       return list.sort((a, b) => dueValue(a).localeCompare(dueValue(b)));
     default:
       return list;
   }
+}
+
+export function sortSubjects(projects, sortBy, order) {
+  return sortItems(projects, sortBy, order, p => p.name);
+}
+
+export const TASK_SORTS = [
+  { value: 'custom', label: 'Custom Order' },
+  { value: 'name', label: 'Task Name (A–Z)' },
+  { value: 'priority', label: 'Priority (High to Low)' },
+  { value: 'due', label: 'Due Date' },
+];
+
+export function sortTasks(tasks, sortBy, order) {
+  return sortItems(tasks, sortBy, order, t => t.title);
 }
 
 // Move one item inside a list.

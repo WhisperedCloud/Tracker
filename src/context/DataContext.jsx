@@ -13,6 +13,7 @@ import {
   effectiveStatus,
   statusChange,
   applyCustomOrder,
+  mergeVisibleOrder,
 } from '@/lib/subjects';
 
 const DataContext = createContext();
@@ -68,6 +69,8 @@ export function DataProvider({ children }) {
   const [projectRows, setProjects] = useState([]);
   // This person's custom subject order (ids), saved on their profile.
   const [subjectOrder, setSubjectOrder] = useState(() => user?.subject_order || []);
+  // This person's custom task order on subject pages (ids), saved on their profile.
+  const [taskOrder, setTaskOrder] = useState(() => user?.task_order || []);
   const [tasks, setTasks] = useState([]);
   const [personalTasks, setPersonalTasks] = useState([]);
   const [comments, setComments] = useState([]);
@@ -140,6 +143,7 @@ export function DataProvider({ children }) {
 
   useEffect(() => {
     setSubjectOrder(user?.subject_order || []);
+    setTaskOrder(user?.task_order || []);
   }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fire-and-forget email; a failure shows a toast but never undoes the save.
@@ -621,6 +625,27 @@ export function DataProvider({ children }) {
     return result.ok;
   };
 
+  // Save this person's custom order of tasks (a list of task ids).
+  const saveTaskOrder = async (orderedIds) => {
+    const previous = taskOrder;
+    setTaskOrder(orderedIds);
+    const result = await run('Could not save your task order',
+      supabase.from('profiles').update({ task_order: orderedIds }).eq('id', userId));
+    if (!result.ok) setTaskOrder(previous);
+    return result.ok;
+  };
+
+  // Reorder one visible list (a page's subjects, a main task's subtasks, a
+  // filtered list...). Items not in the list keep their saved places.
+  const reorderSubjects = (orderedIds) => {
+    const fullOrder = applyCustomOrder(projectRows, subjectOrder).map(p => p.id);
+    return saveSubjectOrder(mergeVisibleOrder(fullOrder, orderedIds));
+  };
+  const reorderTasks = (orderedIds) => {
+    const fullOrder = applyCustomOrder([...tasks, ...personalTasks], taskOrder).map(t => t.id);
+    return saveTaskOrder(mergeVisibleOrder(fullOrder, orderedIds));
+  };
+
   const deleteProject = async (projectId) => {
     const previousProject = projectRows.find(p => p.id === projectId);
     const previousTasks = tasks.filter(t => t.project_id === projectId);
@@ -1013,6 +1038,10 @@ export function DataProvider({ children }) {
         deleteProject,
         subjectOrder,
         saveSubjectOrder,
+        taskOrder,
+        saveTaskOrder,
+        reorderSubjects,
+        reorderTasks,
         getProjectWorkItems,
         // Tasks
         createTask,

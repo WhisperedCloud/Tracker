@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { CalendarClock, BookOpen, MessagesSquare, Pencil, Trash2, LogOut } from 'lucide-react';
 import { useDialog } from '@/components/ui/DialogProvider';
 import { SubjectStatusSelect, SubjectPrioritySelect } from '@/components/projects/SubjectControls';
+import { SortableList, SortableItem, ReorderControls, SortSelect, ReorderHint, moveId } from '@/components/ui/Sortable';
+import { SUBJECT_SORTS, TASK_SORTS, sortSubjects, sortTasks } from '@/lib/subjects';
 import { StudySessionsPage } from '@/pages/study/StudySessionsPage';
 import { ResourcesPage } from '@/pages/study/ResourcesPage';
 import { QABoardPage } from '@/pages/study/QABoardPage';
@@ -60,10 +62,13 @@ export function TeamWorkspace({
   const {
     teams, projects, tasks, teamMembers, profiles, activity, getProjectProgress, getTeamStats, isMemberOf,
     canManageTeam, deleteTeam, leaveTeam,
+    subjectOrder, taskOrder, reorderSubjects, reorderTasks,
   } = useData();
   const { user } = useAuth();
   const { confirm } = useDialog();
 
+  const [subjectSort, setSubjectSort] = useState('custom'); // Custom Order is the default view
+  const [taskSort, setTaskSort] = useState('custom');
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'members' | 'projects' | 'tasks' | 'workload' | 'activity' | 'reports'
 
   const team = teams.find(t => t.id === teamId);
@@ -78,7 +83,12 @@ export function TeamWorkspace({
   }
 
   const teamProjects = projects.filter(p => p.team_id === team.id);
-  const teamTasks = tasks.filter(t => t.team_id === team.id);
+  const teamTasks = sortTasks(tasks.filter(t => t.team_id === team.id), taskSort, taskOrder);
+  const sortedTeamProjects = sortSubjects(teamProjects, subjectSort, subjectOrder);
+  const subjectIds = sortedTeamProjects.map(p => p.id);
+  const taskIds = teamTasks.map(t => t.id);
+  const canReorderSubjects = subjectSort === 'custom' && subjectIds.length > 1;
+  const canReorderTasks = taskSort === 'custom' && taskIds.length > 1;
   const teamActivity = activity.filter(a => {
     const task = tasks.find(t => t.id === a.task_id);
     return task && task.team_id === team.id;
@@ -248,16 +258,38 @@ export function TeamWorkspace({
 
       {/* TAB 2: PROJECTS */}
       {activeTab === 'projects' && (
+        <div className="space-y-3">
+        {teamProjects.length > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <ReorderHint canReorder={subjectSort === 'custom'} what="subjects" />
+            <SortSelect ariaLabel="Sort subjects" value={subjectSort} onChange={setSubjectSort} options={SUBJECT_SORTS} />
+          </div>
+        )}
+        <SortableList ids={subjectIds} disabled={!canReorderSubjects} onReorder={reorderSubjects} grid>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {teamProjects.map((proj, i) => {
+          {sortedTeamProjects.map((proj, i) => {
             const progress = getProjectProgress(proj.id);
             const projTasks = tasks.filter(t => t.project_id === proj.id);
             return (
-              <Card key={proj.id} index={i} className="p-5" onClick={() => onOpenProject(proj.id)}>
+              <SortableItem key={proj.id} id={proj.id} disabled={!canReorderSubjects}>
+              {(handle) => (
+              <Card index={i} className="p-5 h-full" onClick={() => onOpenProject(proj.id)}>
                 <div className="flex items-start justify-between gap-2 mb-3">
-                  <div>
+                  <div className="flex items-start gap-2 min-w-0">
+                  {canReorderSubjects && (
+                    <ReorderControls
+                      handle={handle}
+                      name={proj.name}
+                      onUp={() => { const n = moveId(subjectIds, proj.id, -1); if (n) reorderSubjects(n); }}
+                      onDown={() => { const n = moveId(subjectIds, proj.id, 1); if (n) reorderSubjects(n); }}
+                      isFirst={i === 0}
+                      isLast={i === subjectIds.length - 1}
+                    />
+                  )}
+                  <div className="min-w-0">
                     <h3 className="font-bold text-base text-slate-900 dark:text-white">{proj.name}</h3>
                     <span className="text-[11px] text-slate-500">{proj.category} &bull; Due {formatDate(proj.due_date)}</span>
+                  </div>
                   </div>
                   <SubjectStatusSelect project={proj} showHint={false} />
                 </div>
@@ -271,27 +303,49 @@ export function TeamWorkspace({
                   <Progress value={progress} />
                 </div>
               </Card>
+              )}
+              </SortableItem>
             );
           })}
+        </div>
+        </SortableList>
         </div>
       )}
 
       {/* TAB 3: TASKS */}
       {activeTab === 'tasks' && (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">All Tasks for {team.name}</CardTitle>
-            <Button size="sm" onClick={() => onOpenNewTaskModal(team.id)} className="text-xs">
-              <Plus className="w-3.5 h-3.5" /> Add Task
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {teamTasks.length > 1 && (
+                <SortSelect ariaLabel="Sort tasks" value={taskSort} onChange={setTaskSort} options={TASK_SORTS} />
+              )}
+              <Button size="sm" onClick={() => onOpenNewTaskModal(team.id)} className="text-xs">
+                <Plus className="w-3.5 h-3.5" /> Add Task
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-2">
-            {teamTasks.map((t) => (
+            {teamTasks.length > 1 && <ReorderHint canReorder={taskSort === 'custom'} what="tasks" />}
+            <SortableList ids={taskIds} disabled={!canReorderTasks} onReorder={reorderTasks}>
+            {teamTasks.map((t, i) => (
+              <SortableItem key={t.id} id={t.id} disabled={!canReorderTasks}>
+              {(handle) => (
               <div
-                key={t.id}
                 onClick={() => onOpenTaskDetails(t.id)}
                 className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-slate-900 flex items-center justify-between gap-4 hover:border-primary-400 cursor-pointer transition-all"
               >
+                {canReorderTasks && (
+                  <ReorderControls
+                    handle={handle}
+                    name={t.title}
+                    onUp={() => { const n = moveId(taskIds, t.id, -1); if (n) reorderTasks(n); }}
+                    onDown={() => { const n = moveId(taskIds, t.id, 1); if (n) reorderTasks(n); }}
+                    isFirst={i === 0}
+                    isLast={i === taskIds.length - 1}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <h4 className="text-xs font-semibold text-slate-900 dark:text-white truncate">{t.title}</h4>
                   <span className="text-[11px] text-slate-400">Due {formatDate(t.due_date)}</span>
@@ -305,7 +359,10 @@ export function TeamWorkspace({
                   </span>
                 </div>
               </div>
+              )}
+              </SortableItem>
             ))}
+            </SortableList>
           </CardContent>
         </Card>
       )}

@@ -28,6 +28,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Progress } from '@/components/ui/Progress';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
+import { SortableList, SortableItem, ReorderControls, SortSelect, moveId } from '@/components/ui/Sortable';
+import { TASK_SORTS, sortTasks } from '@/lib/subjects';
 import {
   formatDate,
   formatTimeAgo,
@@ -71,21 +73,28 @@ export function MainDashboard({
     approveTaskReview,
     submitTaskForReview,
     canManageTask,
-    memberTeams
+    memberTeams,
+    taskOrder,
+    reorderTasks
   } = useData();
 
   const { upcomingSessions, minutesToday, minutesThisWeek, streakDays, timer } = useStudy();
   const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('all');
+  const [taskSort, setTaskSort] = useState('custom'); // Custom Order is the default view
 
   const stats = getTeamStats(selectedTeamFilter === 'all' ? null : selectedTeamFilter);
 
   // Filtered Tasks
-  const filteredTasks = tasks.filter((t) => {
+  const filteredTasks = sortTasks(tasks, taskSort, taskOrder).filter((t) => {
     if (selectedTeamFilter !== 'all' && t.team_id !== selectedTeamFilter) return false;
     if (selectedStatusFilter !== 'all' && t.status !== selectedStatusFilter) return false;
     return true;
   });
+
+  // The table shows the first 8; reordering moves tasks within those.
+  const shownTasks = filteredTasks.slice(0, 8);
+  const shownIds = shownTasks.map(t => t.id);
 
   // My assigned tasks
   const myAssignedTasks = tasks.filter((t) => t.assigned_to === user?.id);
@@ -360,6 +369,7 @@ export function MainDashboard({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <SortSelect ariaLabel="Sort tasks" value={taskSort} onChange={setTaskSort} options={TASK_SORTS} />
             <Select size="sm" aria-label="Filter by study group"
               value={selectedTeamFilter}
               onChange={(e) => setSelectedTeamFilter(e.target.value)}
@@ -390,6 +400,7 @@ export function MainDashboard({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                {taskSort === 'custom' && <th className="py-3 pl-3 pr-0 w-8"><span className="sr-only">Order</span></th>}
                 <th className="py-3 px-4">Task Name</th>
                 <th className="py-3 px-4">Subject</th>
                 <th className="py-3 px-4">Assignee</th>
@@ -402,18 +413,35 @@ export function MainDashboard({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
               {filteredTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={taskSort === 'custom' ? 8 : 7} className="py-8 text-center text-slate-400">
                     No tasks match the filter criteria.
                   </td>
                 </tr>
               ) : (
-                filteredTasks.slice(0, 8).map((task) => {
+                <SortableList ids={shownIds} disabled={taskSort !== 'custom'} onReorder={reorderTasks}>
+                {shownTasks.map((task, i) => {
                   const proj = projects.find(p => p.id === task.project_id);
                   const assignee = profiles.find(p => p.id === task.assigned_to);
                   const isTaskOverdue = isOverdue(task.due_date, task.status);
 
                   return (
-                    <tr key={task.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                    <SortableItem as="tr" key={task.id} id={task.id} disabled={taskSort !== 'custom'} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors bg-surface dark:bg-slate-900">
+                    {(handle) => (
+                    <>
+                      {taskSort === 'custom' && (
+                        <td className="py-3.5 pl-3 pr-0 w-8">
+                          {shownIds.length > 1 && (
+                            <ReorderControls
+                              handle={handle}
+                              name={task.title}
+                              onUp={() => { const n = moveId(shownIds, task.id, -1); if (n) reorderTasks(n); }}
+                              onDown={() => { const n = moveId(shownIds, task.id, 1); if (n) reorderTasks(n); }}
+                              isFirst={i === 0}
+                              isLast={i === shownIds.length - 1}
+                            />
+                          )}
+                        </td>
+                      )}
                       <td className="py-3.5 px-4 font-medium text-slate-900 dark:text-slate-100">
                         <button
                           onClick={() => onOpenTaskDetails(task.id)}
@@ -493,9 +521,12 @@ export function MainDashboard({
                           Details &rarr;
                         </Button>
                       </td>
-                    </tr>
+                    </>
+                    )}
+                    </SortableItem>
                   );
-                })
+                })}
+                </SortableList>
               )}
             </tbody>
           </table>

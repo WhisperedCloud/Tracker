@@ -27,6 +27,12 @@ import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
+import { DndContext, closestCorners, useDroppable } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import {
+  SortableList, SortableItem, ReorderControls, SortSelect, ReorderHint, moveId, useReorderSensors,
+} from '@/components/ui/Sortable';
+import { TASK_SORTS, sortTasks } from '@/lib/subjects';
 import {
   formatDate,
   isOverdue,
@@ -42,8 +48,12 @@ export function PersonalTasks() {
     createPersonalTask,
     updatePersonalTask,
     togglePersonalTaskStatus,
-    deletePersonalTask
+    deletePersonalTask,
+    taskOrder,
+    reorderTasks
   } = useData();
+  const [taskSort, setTaskSort] = useState('custom'); // Custom Order is the default view
+  const boardSensors = useReorderSensors();
 
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban' | 'calendar'
   const [search, setSearch] = useState('');
@@ -69,8 +79,8 @@ export function PersonalTasks() {
   const overdueTasks = personalTasks.filter(t => isOverdue(t.due_date, t.status)).length;
   const completionPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // Filter tasks
-  const filteredTasks = personalTasks.filter((t) => {
+  // Filter tasks, then put them in the chosen order.
+  const filteredTasks = sortTasks(personalTasks, taskSort, taskOrder).filter((t) => {
     if (search && !t.title.toLowerCase().includes(search.toLowerCase()) && !t.description?.toLowerCase().includes(search.toLowerCase())) {
       return false;
     }
@@ -79,6 +89,33 @@ export function PersonalTasks() {
     if (categoryFilter !== 'all' && t.category !== categoryFilter) return false;
     return true;
   });
+
+  const canReorder = taskSort === 'custom';
+  const listIds = filteredTasks.map(t => t.id);
+  const move = (ids, id, delta) => { const n = moveId(ids, id, delta); if (n) reorderTasks(n); };
+
+  // Board: drag within a column to reorder, or into another column to change
+  // the task's status.
+  const BOARD_COLUMNS = ['To Do', 'In Progress', 'Completed'];
+  const columnIds = (status) => filteredTasks.filter(t => t.status === status).map(t => t.id);
+  const handleBoardDragEnd = ({ active, over }) => {
+    if (!over) return;
+    const from = active.data.current?.group;
+    const to = over.data.current?.group ?? over.data.current?.column;
+    if (!from || !to) return;
+    if (from === to) {
+      if (active.id === over.id) return;
+      const ids = columnIds(from);
+      reorderTasks(arrayMove(ids, ids.indexOf(active.id), ids.indexOf(over.id)));
+      return;
+    }
+    // Into another column: change status and place it where it was dropped.
+    const target = columnIds(to);
+    const at = target.indexOf(over.id);
+    target.splice(at < 0 ? target.length : at, 0, active.id);
+    updatePersonalTask(active.id, { status: to });
+    reorderTasks(target);
+  };
 
   const handleOpenCreate = () => {
     setEditingTask(null);
@@ -251,8 +288,17 @@ export function PersonalTasks() {
             <option value="Finance">Finance</option>
             <option value="General">General</option>
           </Select>
+
+          {viewMode !== 'calendar' && (
+            <SortSelect ariaLabel="Sort tasks" value={taskSort} onChange={setTaskSort} options={TASK_SORTS} />
+          )}
         </div>
       </div>
+      {viewMode !== 'calendar' && personalTasks.length > 1 && (
+        <div className="-mt-3">
+          <ReorderHint canReorder={canReorder} what={viewMode === 'kanban' ? 'cards (or into another column to change status)' : 'tasks'} />
+        </div>
+      )}
 
       {/* VIEW 1: LIST VIEW */}
       {viewMode === 'list' && (
@@ -265,13 +311,15 @@ export function PersonalTasks() {
               </Button>
             </div>
           ) : (
-            filteredTasks.map((t) => {
+            <SortableList ids={listIds} disabled={!canReorder} onReorder={reorderTasks}>
+            {filteredTasks.map((t, i) => {
               const overdue = isOverdue(t.due_date, t.status);
               const isCompleted = t.status === 'Completed';
 
               return (
+                <SortableItem key={t.id} id={t.id} disabled={!canReorder}>
+                {(handle) => (
                 <div
-                  key={t.id}
                   className={cn(
                     'p-4 rounded-xl border bg-surface dark:bg-slate-900 flex items-center justify-between gap-4 transition-all hover:shadow-xs group',
                     isCompleted
@@ -280,6 +328,16 @@ export function PersonalTasks() {
                   )}
                 >
                   <div className="flex items-center gap-3.5 flex-1 min-w-0">
+                    {canReorder && listIds.length > 1 && (
+                      <ReorderControls
+                        handle={handle}
+                        name={t.title}
+                        onUp={() => move(listIds, t.id, -1)}
+                        onDown={() => move(listIds, t.id, 1)}
+                        isFirst={i === 0}
+                        isLast={i === listIds.length - 1}
+                      />
+                    )}
                     <button
                       onClick={() => togglePersonalTaskStatus(t.id)}
                       className="shrink-0 text-slate-400 hover:text-emerald-600 transition-colors"
@@ -341,19 +399,24 @@ export function PersonalTasks() {
                     </button>
                   </div>
                 </div>
+                )}
+                </SortableItem>
               );
-            })
+            })}
+            </SortableList>
           )}
         </div>
       )}
 
       {/* VIEW 2: KANBAN BOARD VIEW */}
       {viewMode === 'kanban' && (
+        <DndContext sensors={boardSensors} collisionDetection={closestCorners} onDragEnd={handleBoardDragEnd}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {['To Do', 'In Progress', 'Completed'].map((columnStatus) => {
+          {BOARD_COLUMNS.map((columnStatus) => {
             const columnTasks = filteredTasks.filter(t => t.status === columnStatus);
+            const ids = columnTasks.map(t => t.id);
             return (
-              <div key={columnStatus} className="bg-slate-100/70 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col">
+              <BoardColumn key={columnStatus} status={columnStatus} disabled={!canReorder}>
                 <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                     {columnStatus}
@@ -363,19 +426,35 @@ export function PersonalTasks() {
                   </span>
                 </div>
 
-                <div className="space-y-3 flex-1 overflow-y-auto">
+                <SortableContext items={ids} strategy={verticalListSortingStrategy} disabled={!canReorder}>
+                <div className="space-y-3 flex-1 overflow-y-auto min-h-[4rem]">
                   {columnTasks.length === 0 ? (
-                    <div className="text-center py-8 text-xs text-slate-400 italic">No tasks in {columnStatus}</div>
+                    <div className="text-center py-8 text-xs text-slate-400 italic">
+                      {canReorder ? `Drop a task here to mark it ${columnStatus}` : `No tasks in ${columnStatus}`}
+                    </div>
                   ) : (
-                    columnTasks.map((t) => (
+                    columnTasks.map((t, i) => (
+                      <SortableItem key={t.id} id={t.id} group={columnStatus} disabled={!canReorder}>
+                      {(handle) => (
                       <div
-                        key={t.id}
                         className="p-3.5 rounded-xl bg-surface dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-2.5"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                            {t.title}
-                          </span>
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            {canReorder && (
+                              <ReorderControls
+                                handle={handle}
+                                name={t.title}
+                                onUp={() => move(ids, t.id, -1)}
+                                onDown={() => move(ids, t.id, 1)}
+                                isFirst={i === 0}
+                                isLast={i === ids.length - 1}
+                              />
+                            )}
+                            <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                              {t.title}
+                            </span>
+                          </div>
                           <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0', getPriorityBadgeColor(t.priority))}>
                             {t.priority}
                           </span>
@@ -395,13 +474,17 @@ export function PersonalTasks() {
                           </div>
                         </div>
                       </div>
+                      )}
+                      </SortableItem>
                     ))
                   )}
                 </div>
-              </div>
+                </SortableContext>
+              </BoardColumn>
             );
           })}
         </div>
+        </DndContext>
       )}
 
       {/* VIEW 3: CALENDAR VIEW */}
@@ -529,6 +612,23 @@ export function PersonalTasks() {
           </div>
         </form>
       </Modal>
+    </div>
+  );
+}
+
+// A board column that also accepts drops when it is empty.
+function BoardColumn({ status, disabled, children }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `column:${status}`, data: { column: status }, disabled });
+  return (
+    <div
+      ref={setNodeRef}
+      data-column={status}
+      className={cn(
+        'bg-slate-100/70 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col transition-colors',
+        isOver && 'border-primary-400 bg-primary-50/60 dark:bg-primary-950/30'
+      )}
+    >
+      {children}
     </div>
   );
 }

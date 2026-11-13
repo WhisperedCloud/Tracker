@@ -24,6 +24,7 @@ import { SmartWorkloadBalancer } from '@/components/tasks/SmartWorkloadBalancer'
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { useDialog } from '@/components/ui/DialogProvider';
+import { SubjectStatusSelect, SubjectPrioritySelect } from '@/components/projects/SubjectControls';
 import {
   formatDate,
   formatTimeAgo,
@@ -37,7 +38,8 @@ export function ProjectDetails({
   projectId,
   onBack,
   onOpenTaskDetails,
-  onOpenCreateSubtask
+  onOpenCreateSubtask,
+  onEditProject
 }) {
   const {
     projects,
@@ -47,6 +49,7 @@ export function ProjectDetails({
     comments,
     attachments,
     getProjectProgress,
+    getProjectWorkItems,
     deleteProject,
     canManageProject
   } = useData();
@@ -69,11 +72,12 @@ export function ProjectDetails({
   const team = teams.find(t => t.id === project.team_id);
   const projectTasks = tasks.filter(t => t.project_id === project.id);
   const parentTasks = projectTasks.filter(t => !t.parent_task_id);
-  const subtasks = projectTasks.filter(t => t.parent_task_id !== null);
 
-  // Automatic Progress: (Completed Subtasks / Total Subtasks) * 100
+  // Automatic progress: completed work items / all work items x 100, where a
+  // work item is a task with no subtasks of its own. Status uses the same items.
   const progress = getProjectProgress(project.id);
-  const completedSubtasks = subtasks.filter(t => t.status === 'Completed').length;
+  const workItems = getProjectWorkItems(project.id);
+  const completedItems = workItems.filter(t => t.status === 'Completed').length;
   const isLeader = canManageProject(project);
 
   return (
@@ -93,12 +97,6 @@ export function ProjectDetails({
                 <span className="text-xs font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400">
                   {team?.name || 'Workspace'}
                 </span>
-                <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', getStatusBadgeColor(project.status))}>
-                  {project.status}
-                </span>
-                <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', getPriorityBadgeColor(project.priority))}>
-                  {project.priority} Priority
-                </span>
               </div>
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight mt-1">
                 {project.name}
@@ -106,6 +104,16 @@ export function ProjectDetails({
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
                 {project.description}
               </p>
+              <div className="flex flex-wrap items-start gap-4 mt-3">
+                <div>
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Status</span>
+                  <SubjectStatusSelect project={project} className="items-start" />
+                </div>
+                <div>
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Priority</span>
+                  <SubjectPrioritySelect project={project} />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -118,6 +126,18 @@ export function ProjectDetails({
               <Plus className="w-4 h-4" />
               Add Subtask
             </Button>
+            {isLeader && onEditProject && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onEditProject(project.id)}
+                aria-label="Edit subject"
+                title="Edit subject"
+                className="text-xs gap-1.5"
+              >
+                <Edit2 className="w-4 h-4" /> Edit
+              </Button>
+            )}
             {isLeader && (
               <Button
                 variant="outline"
@@ -148,13 +168,13 @@ export function ProjectDetails({
             <div className="flex justify-between items-center text-xs font-semibold">
               <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <TrendingUp className="w-4 h-4 text-primary-600" />
-                Automatic Progress Formula: ({completedSubtasks} / {subtasks.length || projectTasks.length}) &times; 100
+                Automatic Progress Formula: ({completedItems} / {workItems.length}) &times; 100
               </span>
               <span className="text-base font-extrabold text-primary-600 dark:text-primary-400">{progress}%</span>
             </div>
             <Progress value={progress} barClassName="h-3" />
             <p className="text-[11px] text-slate-400">
-              Progress is worked out from completed tasks, so it always reflects real work.
+              Progress and status are worked out from the tasks: a main task with subtasks counts through its subtasks.
             </p>
           </div>
 

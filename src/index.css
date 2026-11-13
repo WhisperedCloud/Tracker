@@ -25,6 +25,16 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
+  /* Headings and display text use Manrope; everything else inherits Inter. */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+
+  /* Browsers default these to bold (700), which is not loaded. */
+  b, strong, th, optgroup {
+    font-weight: 500;
+  }
+
   /* Native controls (checkboxes, radios, range) pick up the brand brown. */
   input,
   progress {

@@ -104,8 +104,25 @@ export default {
         warning: { DEFAULT: '#B08024', 50: '#FBF5E6', 500: '#B08024', 600: '#8F661B' },
         danger: { DEFAULT: '#963D28', 50: '#FBF0EC', 500: '#B04E35', 600: '#963D28' },
       },
+      // Two families, two weights each:
+      //   Manrope (font-heading): headings, display text, buttons, article body
+      //   Inter   (font-sans):    body, UI, forms, article titles
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        heading: ['Manrope', 'Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
+      // Only 400 and 500 are loaded, so every heavier weight class resolves
+      // to 500 (no browser-faked bold) and lighter ones to 400.
+      fontWeight: {
+        thin: '400',
+        extralight: '400',
+        light: '400',
+        normal: '400',
+        medium: '500',
+        semibold: '500',
+        bold: '500',
+        extrabold: '500',
+        black: '500',
       },
       boxShadow: {
         // Soft, warm shadows instead of cool gray ones.

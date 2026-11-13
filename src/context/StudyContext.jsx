@@ -300,6 +300,22 @@ export function StudyProvider({ children }) {
     }
   };
 
+  // Edit a resource's text fields (a file itself is replaced by re-uploading).
+  const updateResource = async (id, updates) => {
+    const previous = resources.find(r => r.id === id);
+    if (!previous) return null;
+    const allowed = ['title', 'description', 'url', 'body', 'project_id'];
+    const clean = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)));
+    if ('project_id' in clean) clean.project_id = clean.project_id || null;
+    setResources(prev => prev.map(r => (r.id === id ? { ...r, ...clean } : r)));
+    const saved = await run('Could not update the resource', supabase.from('study_resources').update(clean).eq('id', id));
+    if (!saved.ok) {
+      setResources(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...clean };
+  };
+
   const getResourceFileUrl = async (resource) => {
     const result = await run('Could not open the file',
       supabase.storage.from(RESOURCES_BUCKET).createSignedUrl(resource.file_path, 300));
@@ -328,6 +344,23 @@ export function StudyProvider({ children }) {
     }
     return entry;
   }, [userId, run]);
+
+  // Correct your own entry: minutes, note, subject or date.
+  const updateLog = async (id, updates) => {
+    const previous = studyLogs.find(l => l.id === id);
+    if (!previous) return null;
+    const clean = { ...updates };
+    if ('minutes' in clean) clean.minutes = Math.max(1, Math.min(720, Math.round(clean.minutes)));
+    if ('project_id' in clean) clean.project_id = clean.project_id || null;
+    if ('team_id' in clean) clean.team_id = clean.team_id || null;
+    setStudyLogs(prev => prev.map(l => (l.id === id ? { ...l, ...clean } : l)));
+    const saved = await run('Could not update the entry', supabase.from('study_logs').update(clean).eq('id', id));
+    if (!saved.ok) {
+      setStudyLogs(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...clean };
+  };
 
   const deleteLog = async (id) => {
     const previous = studyLogs.find(l => l.id === id);
@@ -398,6 +431,28 @@ export function StudyProvider({ children }) {
         userId: answer.created_by,
       });
     }
+  };
+
+  const updateQuestion = async (question, { title, body, project_id }) => {
+    const changes = { title, body: body || '', project_id: project_id || null, updated_at: nowIso() };
+    setQuestions(prev => prev.map(q => (q.id === question.id ? { ...q, ...changes } : q)));
+    const saved = await run('Could not update the question', supabase.from('questions').update(changes).eq('id', question.id));
+    if (!saved.ok) {
+      setQuestions(prev => upsertById(prev, question));
+      return null;
+    }
+    return { ...question, ...changes };
+  };
+
+  const updateAnswer = async (answer, body) => {
+    const changes = { body, updated_at: nowIso() };
+    setAnswers(prev => prev.map(a => (a.id === answer.id ? { ...a, ...changes } : a)));
+    const saved = await run('Could not update the answer', supabase.from('answers').update(changes).eq('id', answer.id));
+    if (!saved.ok) {
+      setAnswers(prev => prev.map(a => (a.id === answer.id ? answer : a)));
+      return null;
+    }
+    return { ...answer, ...changes };
   };
 
   const deleteQuestion = async (question) => {
@@ -593,11 +648,13 @@ export function StudyProvider({ children }) {
         // resources
         resources,
         addResource,
+        updateResource,
         deleteResource,
         getResourceFileUrl,
         // focus
         studyLogs,
         logStudy,
+        updateLog,
         deleteLog,
         timer,
         remainingMs,
@@ -613,6 +670,8 @@ export function StudyProvider({ children }) {
         askQuestion,
         answerQuestion,
         acceptAnswer,
+        updateQuestion,
+        updateAnswer,
         deleteQuestion,
         deleteAnswer,
       }}

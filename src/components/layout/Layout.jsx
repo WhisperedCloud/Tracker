@@ -23,6 +23,7 @@ import { CreateTeamModal } from '@/components/teams/CreateTeamModal';
 import { TaskDetailsModal } from '@/components/tasks/TaskDetailsModal';
 
 import { useNotifications } from '@/context/NotificationContext';
+import { useData } from '@/context/DataContext';
 import { Bell, AlertCircle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -55,6 +56,11 @@ export function Layout() {
   const [createProjectTeamId, setCreateProjectTeamId] = useState(null);
 
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+  const [editProjectId, setEditProjectId] = useState(null);
+  const [editTeamId, setEditTeamId] = useState(null);
+  const { projects, teams } = useData();
+  const editProject = projects.find(p => p.id === editProjectId) || null;
+  const editTeam = teams.find(t => t.id === editTeamId) || null;
 
   const [activeTaskId, setActiveTaskId] = useState(null);
 
@@ -223,11 +229,14 @@ export function Layout() {
                 onOpenTaskDetails={handleOpenTaskDetails}
                 onOpenNewTaskModal={(tId) => handleOpenNewTaskModal(tId)}
                 onOpenNewProjectModal={(tId) => handleOpenNewProjectModal(tId)}
+                onEditTeam={setEditTeamId}
+                onEditProject={setEditProjectId}
               />
             ) : (
               <TeamsList
                 onSelectTeam={handleSelectTeam}
                 onOpenCreateTeam={() => setIsCreateTeamOpen(true)}
+                onEditTeam={setEditTeamId}
               />
             )
           )}
@@ -239,11 +248,13 @@ export function Layout() {
                 onBack={() => setSelectedProjectId(null)}
                 onOpenTaskDetails={handleOpenTaskDetails}
                 onOpenCreateSubtask={(parentId, pId, tId) => handleOpenCreateSubtask(parentId, pId, tId)}
+                onEditProject={setEditProjectId}
               />
             ) : (
               <ProjectsList
                 onSelectProject={handleSelectProject}
                 onOpenCreateProject={() => handleOpenNewProjectModal()}
+                onEditProject={setEditProjectId}
               />
             )
           )}
@@ -283,9 +294,21 @@ export function Layout() {
         initialTeamId={createProjectTeamId}
       />
 
+      <CreateProjectModal
+        isOpen={Boolean(editProject)}
+        onClose={() => setEditProjectId(null)}
+        project={editProject}
+      />
+
       <CreateTeamModal
         isOpen={isCreateTeamOpen}
         onClose={() => setIsCreateTeamOpen(false)}
+      />
+
+      <CreateTeamModal
+        isOpen={Boolean(editTeam)}
+        onClose={() => setEditTeamId(null)}
+        team={editTeam}
       />
 
       <TaskDetailsModal

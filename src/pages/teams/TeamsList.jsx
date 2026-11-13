@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Users2, ArrowRight, Mail } from 'lucide-react';
+import { Plus, Users2, ArrowRight, Mail, Pencil } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -7,8 +7,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 
-export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
-  const { teams, teamMembers, projects, tasks, profiles, myPendingInvitations, acceptInvitation, declineInvitation } = useData();
+export function TeamsList({ onSelectTeam, onOpenCreateTeam, onEditTeam }) {
+  const { canManageTeam, teams, teamMembers, projects, tasks, profiles, myPendingInvitations, acceptInvitation, declineInvitation } = useData();
   const { user } = useAuth();
   const [busyInviteId, setBusyInviteId] = useState(null);
 
@@ -126,6 +126,18 @@ export function TeamsList({ onSelectTeam, onOpenCreateTeam }) {
                       )}
                     </div>
                   </div>
+                  {canManageTeam(team.id) && onEditTeam && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onEditTeam(team.id); }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      aria-label={`Edit ${team.name}`}
+                      title="Edit study group"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
                 </CardHeader>
 
                 <CardContent className="space-y-4 flex-1 flex flex-col justify-between">

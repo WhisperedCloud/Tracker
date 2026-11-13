@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { CalendarClock, BookOpen, MessagesSquare } from 'lucide-react';
+import { CalendarClock, BookOpen, MessagesSquare, Pencil, Trash2, LogOut } from 'lucide-react';
+import { useDialog } from '@/components/ui/DialogProvider';
+import { SubjectStatusSelect, SubjectPrioritySelect } from '@/components/projects/SubjectControls';
 import { StudySessionsPage } from '@/pages/study/StudySessionsPage';
 import { ResourcesPage } from '@/pages/study/ResourcesPage';
 import { QABoardPage } from '@/pages/study/QABoardPage';
@@ -52,10 +54,15 @@ export function TeamWorkspace({
   onOpenProject,
   onOpenTaskDetails,
   onOpenNewTaskModal,
-  onOpenNewProjectModal
+  onOpenNewProjectModal,
+  onEditTeam,
 }) {
-  const { teams, projects, tasks, teamMembers, profiles, activity, getProjectProgress, getTeamStats, isMemberOf } = useData();
+  const {
+    teams, projects, tasks, teamMembers, profiles, activity, getProjectProgress, getTeamStats, isMemberOf,
+    canManageTeam, deleteTeam, leaveTeam,
+  } = useData();
   const { user } = useAuth();
+  const { confirm } = useDialog();
 
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'members' | 'projects' | 'tasks' | 'workload' | 'activity' | 'reports'
 
@@ -127,6 +134,47 @@ export function TeamWorkspace({
               <Button size="sm" variant="outline" onClick={() => onOpenNewProjectModal(team.id)} className="gap-1.5 text-xs">
                 <Plus className="w-4 h-4" />
                 New Subject
+              </Button>
+            )}
+            {canManageTeam(team.id) && onEditTeam && (
+              <Button size="sm" variant="outline" onClick={() => onEditTeam(team.id)} aria-label="Edit study group" title="Edit study group" className="text-xs">
+                <Pencil className="w-4 h-4" />
+              </Button>
+            )}
+            {team.created_by === user?.id ? (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Delete study group"
+                title="Delete study group"
+                className="text-rose-600 border-rose-200 hover:bg-rose-50 text-xs"
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Delete this study group?',
+                    message: `"${team.name}" and all of its subjects, tasks, sessions, resources and questions will be permanently deleted for every member.`,
+                    confirmText: 'Delete group',
+                  });
+                  if (ok && await deleteTeam(team.id)) onBackToTeams();
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            ) : isMemberOf(team.id) && (
+              <Button
+                size="sm"
+                variant="outline"
+                title="Leave study group"
+                className="text-xs gap-1.5"
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Leave this study group?',
+                    message: `You will lose access to "${team.name}" until someone adds you again.`,
+                    confirmText: 'Leave group',
+                  });
+                  if (ok && await leaveTeam(team.id)) onBackToTeams();
+                }}
+              >
+                <LogOut className="w-4 h-4" /> Leave
               </Button>
             )}
           </div>
@@ -211,11 +259,10 @@ export function TeamWorkspace({
                     <h3 className="font-bold text-base text-slate-900 dark:text-white">{proj.name}</h3>
                     <span className="text-[11px] text-slate-500">{proj.category} &bull; Due {formatDate(proj.due_date)}</span>
                   </div>
-                  <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', getStatusBadgeColor(proj.status))}>
-                    {proj.status}
-                  </span>
+                  <SubjectStatusSelect project={proj} showHint={false} />
                 </div>
-                <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 mb-4">{proj.description}</p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 mb-3">{proj.description}</p>
+                <SubjectPrioritySelect project={proj} className="mb-3 inline-block" />
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs font-medium">
                     <span className="text-slate-500">{projTasks.length} Subtasks</span>

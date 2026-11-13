@@ -73,6 +73,7 @@ export function Header({
       <div className="flex items-center gap-3 flex-1 max-w-lg">
         <button
           onClick={() => setIsMobileOpen(true)}
+          aria-label="Open menu"
           className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg lg:hidden"
         >
           <Menu className="w-5 h-5" />

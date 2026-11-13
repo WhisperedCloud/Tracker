@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Link2, FileText, StickyNote, Plus, Trash2, ExternalLink, Download, Search, Upload } from 'lucide-react';
+import { BookOpen, Link2, FileText, StickyNote, Plus, Trash2, ExternalLink, Download, Search, Upload, Pencil } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -18,9 +18,11 @@ const KINDS = {
 };
 const MAX_FILE_MB = 50;
 
-function AddResourceModal({ isOpen, onClose, defaultTeamId }) {
+// Shares a resource, or edits one when `resource` is passed.
+function AddResourceModal({ isOpen, onClose, defaultTeamId, resource = null }) {
   const { memberTeams } = useData();
-  const { addResource } = useStudy();
+  const { addResource, updateResource } = useStudy();
+  const isEditing = Boolean(resource);
   const [kind, setKind] = useState('link');
   const [teamId, setTeamId] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -34,30 +36,43 @@ function AddResourceModal({ isOpen, onClose, defaultTeamId }) {
 
   useEffect(() => {
     if (!isOpen) return;
-    setKind('link');
-    setTeamId(defaultTeamId || memberTeams[0]?.id || '');
-    setProjectId('');
-    setTitle('');
-    setDescription('');
-    setUrl('');
-    setBody('');
+    setKind(resource?.kind || 'link');
+    setTeamId(resource?.team_id || defaultTeamId || memberTeams[0]?.id || '');
+    setProjectId(resource?.project_id || '');
+    setTitle(resource?.title || '');
+    setDescription(resource?.description || '');
+    setUrl(resource?.url || '');
+    setBody(resource?.body || '');
     setFile(null);
     setError('');
     setSaving(false);
-  }, [isOpen]);
+  }, [isOpen, resource?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     if (!teamId) return setError('Choose a study group.');
     if (kind === 'link' && !/^https?:\/\/\S+$/i.test(url.trim())) return setError('Enter a full link starting with https://');
-    if (kind === 'file' && !file) return setError('Choose a file to upload.');
-    if (kind === 'file' && file.size > MAX_FILE_MB * 1024 * 1024) return setError(`Files must be ${MAX_FILE_MB} MB or smaller.`);
+    if (kind === 'file' && !isEditing && !file) return setError('Choose a file to upload.');
+    if (kind === 'file' && file && file.size > MAX_FILE_MB * 1024 * 1024) return setError(`Files must be ${MAX_FILE_MB} MB or smaller.`);
     if (kind === 'note' && !body.trim()) return setError('Write the note first.');
-    const finalTitle = title.trim() || (kind === 'file' ? file.name : '');
+    const finalTitle = title.trim() || (kind === 'file' ? (file?.name || resource?.file_name || '') : '');
     if (!finalTitle) return setError('Give it a title.');
 
     setSaving(true);
+    if (isEditing) {
+      const updated = await updateResource(resource.id, {
+        title: finalTitle,
+        description: description.trim(),
+        project_id: projectId,
+        ...(kind === 'link' ? { url: url.trim() } : {}),
+        ...(kind === 'note' ? { body: body.trim() } : {}),
+      });
+      setSaving(false);
+      if (updated) onClose();
+      else setError('It could not be saved. Check the message in the corner and try again.');
+      return;
+    }
     const saved = await addResource({ team_id: teamId, project_id: projectId, kind, title: finalTitle, description: description.trim(), url: url.trim(), body: body.trim(), file });
     setSaving(false);
     if (saved) onClose();
@@ -68,21 +83,21 @@ function AddResourceModal({ isOpen, onClose, defaultTeamId }) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Share a resource"
+      title={isEditing ? 'Edit resource' : 'Share a resource'}
       description="Links, files and notes are visible to everyone in the study group."
       icon={<BookOpen className="w-4 h-4" />}
       size="md"
       footer={
         <>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="resource-form" disabled={saving}>{saving ? 'Saving...' : 'Share'}</Button>
+          <Button type="submit" form="resource-form" disabled={saving}>{saving ? 'Saving...' : isEditing ? 'Save changes' : 'Share'}</Button>
         </>
       }
     >
       <form id="resource-form" onSubmit={handleSubmit} className="space-y-4">
         {error && <div role="alert" className="p-3 text-xs text-rose-700 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800">{error}</div>}
 
-        <div role="radiogroup" aria-label="Resource type" className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+        {!isEditing && <div role="radiogroup" aria-label="Resource type" className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
           {Object.entries(KINDS).map(([value, { label, Icon }]) => (
             <button key={value} type="button" role="radio" aria-checked={kind === value} onClick={() => setKind(value)}
               className={cn('flex-1 inline-flex items-center justify-center gap-2 h-9 rounded-lg text-sm font-medium transition-colors',
@@ -90,14 +105,17 @@ function AddResourceModal({ isOpen, onClose, defaultTeamId }) {
               <Icon className="w-4 h-4" />{label}
             </button>
           ))}
-        </div>
+        </div>}
 
-        <GroupSubjectFields teamId={teamId} projectId={projectId} onTeamChange={setTeamId} onProjectChange={setProjectId} />
+        <GroupSubjectFields teamId={teamId} projectId={projectId} onTeamChange={setTeamId} onProjectChange={setProjectId} lockTeam={isEditing} />
 
         <Input label={kind === 'file' ? 'Title (optional)' : 'Title *'} placeholder={kind === 'note' ? 'e.g. Key formulas for thermodynamics' : 'e.g. Lecture 4 slides'} value={title} onChange={(e) => setTitle(e.target.value)} />
 
         {kind === 'link' && <Input label="Link *" placeholder="https://..." value={url} onChange={(e) => setUrl(e.target.value)} />}
-        {kind === 'file' && (
+        {kind === 'file' && isEditing && (
+          <p className="text-xs text-slate-500">File: <span className="font-semibold text-slate-700 dark:text-slate-200">{resource.file_name}</span>. To change the file, share a new one and remove this.</p>
+        )}
+        {kind === 'file' && !isEditing && (
           <label className="flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-primary-400 cursor-pointer transition-colors text-center">
             <Upload className="w-5 h-5 text-primary-600" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{file ? file.name : 'Choose a file'}</span>
@@ -112,7 +130,7 @@ function AddResourceModal({ isOpen, onClose, defaultTeamId }) {
   );
 }
 
-function ResourceCard({ resource, index, onOpenNote }) {
+function ResourceCard({ resource, index, onOpenNote, onEdit }) {
   const { teams, projects, profiles } = useData();
   const { deleteResource, getResourceFileUrl, canManage } = useStudy();
   const { confirm } = useDialog();
@@ -144,14 +162,20 @@ function ResourceCard({ resource, index, onOpenNote }) {
           <meta.Icon className="w-5 h-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2 group-hover:text-primary-700 dark:group-hover:text-primary-300">{resource.title}</h3>
+          <h3 className="font-sans text-sm font-semibold text-slate-900 dark:text-white line-clamp-2 group-hover:text-primary-700 dark:group-hover:text-primary-300">{resource.title}</h3>
           <p className="text-[11px] text-slate-500 mt-0.5 truncate">{team?.name}{subject ? ` · ${subject.name}` : ''}</p>
         </div>
         {canManage(resource) && (
-          <button type="button" onClick={(e) => { e.stopPropagation(); remove(); }} aria-label={`Remove ${resource.title}`}
-            className="p-1.5 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-opacity">
-            <Trash2 className="w-4 h-4" />
-          </button>
+          <div className="flex items-center opacity-100 sm:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(resource); }} onKeyDown={(e) => e.stopPropagation()} aria-label={`Edit ${resource.title}`}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <Pencil className="w-4 h-4" />
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); remove(); }} onKeyDown={(e) => e.stopPropagation()} aria-label={`Remove ${resource.title}`}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
         )}
       </div>
       {(resource.description || resource.body) && (
@@ -181,6 +205,7 @@ export function ResourcesPage({ teamId: fixedTeamId = null }) {
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState(false);
   const [note, setNote] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const teamId = fixedTeamId || teamFilter;
   const list = useMemo(() => {
@@ -227,13 +252,14 @@ export function ResourcesPage({ teamId: fixedTeamId = null }) {
           action={memberTeams.length > 0 && <Button size="sm" onClick={() => setAdding(true)}><Plus className="w-4 h-4" />Share resource</Button>} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {list.map((r, i) => <ResourceCard key={r.id} resource={r} index={i} onOpenNote={setNote} />)}
+          {list.map((r, i) => <ResourceCard key={r.id} resource={r} index={i} onOpenNote={setNote} onEdit={setEditing} />)}
         </div>
       )}
 
       <AddResourceModal isOpen={adding} onClose={() => setAdding(false)} defaultTeamId={fixedTeamId || (teamFilter !== 'all' ? teamFilter : '')} />
+      <AddResourceModal isOpen={Boolean(editing)} onClose={() => setEditing(null)} resource={editing} />
       <Modal isOpen={Boolean(note)} onClose={() => setNote(null)} title={note?.title} description="Shared note" icon={<StickyNote className="w-4 h-4" />} size="lg">
-        <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{note?.body}</div>
+        <div className="font-heading text-sm leading-relaxed text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{note?.body}</div>
       </Modal>
     </div>
   );

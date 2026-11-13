@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Play, Pause, RotateCcw, Square, Timer, Flame, CalendarDays, Trophy, Plus, Trash2, Coffee, Clock } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Play, Pause, RotateCcw, Square, Timer, Flame, CalendarDays, Trophy, Plus, Trash2, Coffee, Clock, Pencil } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip } from 'recharts';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -47,9 +47,11 @@ function TimerRing({ progress, phase, children }) {
   );
 }
 
-function LogTimeModal({ isOpen, onClose }) {
+// Logs time studied away from the timer, or corrects an entry when `log` is passed.
+function LogTimeModal({ isOpen, onClose, log = null }) {
   const { memberTeams } = useData();
-  const { logStudy } = useStudy();
+  const { logStudy, updateLog } = useStudy();
+  const isEditing = Boolean(log);
   const [minutes, setMinutes] = useState('30');
   const [teamId, setTeamId] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -57,12 +59,22 @@ function LogTimeModal({ isOpen, onClose }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setMinutes(log ? String(log.minutes) : '30');
+    setTeamId(log?.team_id || '');
+    setProjectId(log?.project_id || '');
+    setNote(log?.note || '');
+    setError('');
+  }, [isOpen, log?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = async (e) => {
     e.preventDefault();
     const value = Number(minutes);
     if (!Number.isFinite(value) || value < 1 || value > 720) return setError('Enter between 1 and 720 minutes.');
     setSaving(true);
-    const saved = await logStudy({ minutes: value, team_id: teamId || null, project_id: projectId || null, note: note.trim() });
+    const fields = { minutes: value, team_id: teamId || null, project_id: projectId || null, note: note.trim() };
+    const saved = isEditing ? await updateLog(log.id, fields) : await logStudy(fields);
     setSaving(false);
     if (saved) {
       setMinutes('30');
@@ -75,11 +87,11 @@ function LogTimeModal({ isOpen, onClose }) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Log study time"
-      description="Add time you studied away from the timer."
+      title={isEditing ? 'Edit study time' : 'Log study time'}
+      description={isEditing ? 'Correct the minutes, subject or note.' : 'Add time you studied away from the timer.'}
       icon={<Clock className="w-4 h-4" />}
       size="sm"
-      footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" form="log-form" disabled={saving}>{saving ? 'Saving...' : 'Log time'}</Button></>}
+      footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" form="log-form" disabled={saving}>{saving ? 'Saving...' : isEditing ? 'Save changes' : 'Log time'}</Button></>}
     >
       <form id="log-form" onSubmit={submit} className="space-y-4">
         {error && <div role="alert" className="p-3 text-xs text-rose-700 bg-rose-50 rounded-lg border border-rose-200">{error}</div>}
@@ -107,6 +119,7 @@ export function FocusPage() {
     minutesToday, minutesThisWeek, streakDays, getLeaderboard,
   } = useStudy();
   const [logging, setLogging] = useState(false);
+  const [editingLog, setEditingLog] = useState(null);
   const [boardTeam, setBoardTeam] = useState('');
   const leaderboardTeam = boardTeam || memberTeams[0]?.id || '';
 
@@ -288,10 +301,16 @@ export function FocusPage() {
                     <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">{formatMinutes(log.minutes)} · {subject?.name || team?.name || 'Personal'}</p>
                     <p className="text-[11px] text-slate-500 truncate">{log.note || formatTimeAgo(log.studied_at)}</p>
                   </div>
-                  <button type="button" onClick={() => deleteLog(log.id)} aria-label="Delete this entry"
-                    className="p-1.5 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center opacity-100 sm:opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <button type="button" onClick={() => setEditingLog(log)} aria-label="Edit this entry"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" onClick={() => deleteLog(log.id)} aria-label="Delete this entry"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -300,6 +319,7 @@ export function FocusPage() {
       </div>
 
       <LogTimeModal isOpen={logging} onClose={() => setLogging(false)} />
+      <LogTimeModal isOpen={Boolean(editingLog)} onClose={() => setEditingLog(null)} log={editingLog} />
     </div>
   );
 }

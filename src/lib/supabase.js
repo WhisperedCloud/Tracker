@@ -11,7 +11,7 @@ export const isSupabaseConfigured = Boolean(
   supabaseAnonKey &&
   !supabaseUrl.includes('placeholder') &&
   !supabaseAnonKey.includes('placeholder') &&
-  supabaseUrl.startsWith('https://')
+  (supabaseUrl.startsWith('https://') || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?/.test(supabaseUrl))
 );
 
 export const supabase = isSupabaseConfigured

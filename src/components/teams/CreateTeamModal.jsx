@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useData } from '@/context/DataContext';
 import { useDialog } from '@/components/ui/DialogProvider';
 
-export function CreateTeamModal({ isOpen, onClose }) {
-  const { createTeam, inviteMember, notifyByEmail } = useData();
+// Creates a study group, or edits one when `team` is passed.
+export function CreateTeamModal({ isOpen, onClose, team = null }) {
+  const { createTeam, updateTeam, inviteMember, notifyByEmail } = useData();
+  const isEditing = Boolean(team);
   const { alert } = useDialog();
 
   const [name, setName] = useState('');
@@ -24,10 +26,30 @@ export function CreateTeamModal({ isOpen, onClose }) {
     setError('');
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    if (team) {
+      setName(team.name || '');
+      setDescription(team.description || '');
+      setAvatarUrl(team.avatar_url || '');
+      setInitialInvites('');
+      setError('');
+    }
+  }, [isOpen, team?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Group name is required.');
+      return;
+    }
+
+    if (isEditing) {
+      setSaving(true);
+      const saved = await updateTeam(team.id, { name, description, avatar_url: avatarUrl.trim() });
+      setSaving(false);
+      if (saved) onClose();
+      else setError('The study group could not be saved. Check the message in the corner and try again.');
       return;
     }
 
@@ -87,8 +109,8 @@ export function CreateTeamModal({ isOpen, onClose }) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Create a Study Group"
-      description="Bring your classmates together to plan, share notes and study."
+      title={isEditing ? 'Edit Study Group' : 'Create a Study Group'}
+      description={isEditing ? 'Change the name, description or image of this group.' : 'Bring your classmates together to plan, share notes and study.'}
       size="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -126,20 +148,20 @@ export function CreateTeamModal({ isOpen, onClose }) {
           onChange={(e) => setAvatarUrl(e.target.value)}
         />
 
-        <Input
+        {!isEditing && <Input
           label="Invite Members by Email (Comma-separated)"
           placeholder="sarah@tasksync.com, marcus@tasksync.com"
           value={initialInvites}
           onChange={(e) => setInitialInvites(e.target.value)}
           helperText="People with an account are added right away; others get an invite link."
-        />
+        />}
 
         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" disabled={saving}>
-            {saving ? 'Creating...' : 'Create Study Group'}
+            {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Study Group'}
           </Button>
         </div>
       </form>

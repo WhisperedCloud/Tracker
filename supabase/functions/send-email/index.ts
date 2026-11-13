@@ -15,6 +15,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.45.4';
 import nodemailer from 'npm:nodemailer@6.9.16';
+import { type Mail, escapeHtml, formatDay, renderHtml, renderText } from './template.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -45,47 +46,8 @@ class HttpError extends Error {
 }
 
 type Profile = { id: string; email: string; full_name: string; role: string };
-type Mail = { to: string; subject: string; heading: string; paragraphs: string[]; cta?: { label: string; url: string } };
 
-// ---------------------------------------------------------------------------
-// Email template: cream page, brown button, matching the app.
-// ---------------------------------------------------------------------------
-const escapeHtml = (value: unknown) =>
-  String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-
-function renderHtml(mail: Mail) {
-  const paragraphs = mail.paragraphs
-    .map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#483B31;">${p}</p>`)
-    .join('');
-  const button = mail.cta
-    ? `<p style="margin:24px 0 8px;"><a href="${escapeHtml(mail.cta.url)}" style="display:inline-block;background:#7B3F00;color:#F6F1E9;text-decoration:none;font-weight:600;font-size:14px;padding:12px 22px;border-radius:10px;">${escapeHtml(mail.cta.label)}</a></p>
-       <p style="margin:12px 0 0;font-size:12px;color:#76634F;">Or open this link: <a href="${escapeHtml(mail.cta.url)}" style="color:#7B3F00;">${escapeHtml(mail.cta.url)}</a></p>`
-    : '';
-  return `<!doctype html><html><body style="margin:0;padding:0;background:#F6F1E9;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F1E9;padding:32px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#FFFCF8;border:1px solid #E5D9C6;border-radius:16px;">
-        <tr><td style="padding:20px 28px;border-bottom:1px solid #E5D9C6;">
-          <img src="${LOGO_URL}" alt="TaskSync" width="140" style="display:block;width:140px;height:auto;border:0;">
-        </td></tr>
-        <tr><td style="padding:28px;">
-          <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3;color:#231C17;">${escapeHtml(mail.heading)}</h1>
-          ${paragraphs}
-          ${button}
-        </td></tr>
-        <tr><td style="padding:16px 28px;border-top:1px solid #E5D9C6;font-size:12px;color:#9A8268;">
-          You received this because of activity in your TaskSync study groups.
-        </td></tr>
-      </table>
-    </td></tr>
-  </table></body></html>`;
-}
-
-function renderText(mail: Mail) {
-  const strip = (s: string) => s.replace(/<[^>]+>/g, '');
-  return [mail.heading, '', ...mail.paragraphs.map(strip), mail.cta ? `\n${mail.cta.label}: ${mail.cta.url}` : '']
-    .join('\n');
-}
+// The email layout lives in template.ts.
 
 async function deliver(mails: Mail[]) {
   const results = await Promise.allSettled(
@@ -95,7 +57,7 @@ async function deliver(mails: Mail[]) {
         to: mail.to,
         subject: mail.subject,
         text: renderText(mail),
-        html: renderHtml(mail),
+        html: renderHtml(mail, { logoUrl: LOGO_URL, appUrl: APP_URL }),
       })
     )
   );
@@ -144,7 +106,10 @@ async function taskContext(db: SupabaseClient, taskId: string, callerId: string)
   const assignee = ctx.members.find((m) => m.id === task.assigned_to) ?? null;
   // The creator of a task can review it, like a organizer.
   const canReview = ctx.isLeader || task.created_by === callerId;
-  return { ...ctx, task, assignee, canReview };
+  const projectName = task.project_id
+    ? (await db.from('projects').select('name').eq('id', task.project_id).maybeSingle()).data?.name ?? ''
+    : '';
+  return { ...ctx, task, assignee, canReview, projectName };
 }
 
 const ensure = (condition: boolean, message: string) => {
@@ -152,6 +117,22 @@ const ensure = (condition: boolean, message: string) => {
 };
 
 const inviteLink = (token: string) => `${APP_URL}/?invite=${encodeURIComponent(token)}`;
+
+// Details rows escape their own values, so undo the escaping of names
+// that were prepared for HTML paragraphs.
+const unescape = (s: string) =>
+  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+
+const roleName = (role: string) => (['leader', 'admin'].includes(role) ? 'Organizer' : 'Member');
+
+// Group, subject and due date rows for task emails.
+function taskDetails(ctx: { team: { name: string }; task: { due_date: string | null }; projectName?: string }) {
+  return [
+    { label: 'Group', value: ctx.team.name },
+    ...(ctx.projectName ? [{ label: 'Subject', value: ctx.projectName }] : []),
+    { label: 'Due', value: formatDay(ctx.task.due_date) || 'No due date' },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Events
@@ -169,13 +150,20 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       return [{
         to: ctx.caller.email,
         subject: `Your study group "${ctx.team.name}" is ready`,
-        heading: `"${ctx.team.name}" has been created`,
+        tag: 'Study group created',
+        tone: 'moss',
+        heading: `${ctx.team.name} is ready`,
+        preheader: 'Your new study group is set up. Add subjects and invite classmates.',
         paragraphs: [
-          `Hi ${escapeHtml(ctx.caller.full_name)}, your new study group is ready and you are its organizer.`,
-          others.length ? `Members added: <strong>${others.join(', ')}</strong>.` : 'No other members have been added yet.',
-          pending.length ? `Invitations sent to: <strong>${pending.join(', ')}</strong>.` : '',
-        ].filter(Boolean),
-        cta: { label: 'Open TaskSync', url: APP_URL },
+          `Hi ${escapeHtml(ctx.caller.full_name)}, your new study group is set up and you are its organizer.`,
+        ],
+        details: [
+          { label: 'Group', value: ctx.team.name },
+          { label: 'Members added', value: others.length ? others.map(unescape).join(', ') : 'None yet' },
+          ...(pending.length ? [{ label: 'Invitations sent', value: pending.map(unescape).join(', ') }] : []),
+        ],
+        cta: { label: 'Open your group', url: APP_URL },
+        note: 'Next: add a subject and split it into tasks for the group.',
       }];
     }
 
@@ -188,10 +176,17 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       return [{
         to: member.email,
         subject: `You were added to "${ctx.team.name}" on TaskSync`,
+        tag: 'Added to a group',
         heading: `Welcome to ${ctx.team.name}`,
+        preheader: `${ctx.caller.full_name} added you to ${ctx.team.name}.`,
         paragraphs: [
-          `Hi ${escapeHtml(member.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> added you to the study group <strong>${escapeHtml(ctx.team.name)}</strong> as a ${escapeHtml(member.teamRole)}.`,
+          `Hi ${escapeHtml(member.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> added you to the study group <strong>${escapeHtml(ctx.team.name)}</strong>.`,
           'Sign in to see the group\'s subjects, sessions and the tasks assigned to you.',
+        ],
+        details: [
+          { label: 'Group', value: ctx.team.name },
+          { label: 'Your role', value: roleName(member.teamRole) },
+          { label: 'Added by', value: ctx.caller.full_name },
         ],
         cta: { label: 'Open the group', url: APP_URL },
       }];
@@ -208,10 +203,18 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       return [{
         to: invite.email,
         subject: `${ctx.caller.full_name} invited you to "${ctx.team.name}" on TaskSync`,
+        tag: 'Invitation',
         heading: `You're invited to join ${ctx.team.name}`,
+        preheader: `${ctx.caller.full_name} invited you to study together on TaskSync.`,
         paragraphs: [
-          `<strong>${escapeHtml(ctx.caller.full_name)}</strong> invited you to join the study group <strong>${escapeHtml(ctx.team.name)}</strong> on TaskSync as a ${escapeHtml(invite.role)}.`,
-          `Create your account with this email address (<strong>${escapeHtml(invite.email)}</strong>), then accept the invitation on the Teams page. The invitation expires in 7 days.`,
+          `<strong>${escapeHtml(ctx.caller.full_name)}</strong> invited you to join the study group <strong>${escapeHtml(ctx.team.name)}</strong> on TaskSync, where the group plans subjects, splits tasks and schedules study sessions.`,
+          `Create your account with <strong>${escapeHtml(invite.email)}</strong>, then accept the invitation.`,
+        ],
+        details: [
+          { label: 'Group', value: ctx.team.name },
+          { label: 'Invited by', value: ctx.caller.full_name },
+          { label: 'Role', value: roleName(invite.role) },
+          { label: 'Expires', value: 'In 7 days' },
         ],
         cta: { label: 'Accept invitation', url: inviteLink(invite.invitation_token) },
       }];
@@ -228,12 +231,18 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
         .map((m) => ({
           to: m.email,
           subject: `New subject in ${ctx.team.name}: ${project.name}`,
-          heading: `New subject: ${project.name}`,
+          tag: 'New subject',
+          heading: project.name,
+          preheader: `${ctx.caller.full_name} added "${project.name}" to ${ctx.team.name}.`,
           paragraphs: [
-            `Hi ${escapeHtml(m.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> added a new subject to your study group <strong>${escapeHtml(ctx.team.name)}</strong>.`,
-            project.description ? escapeHtml(project.description) : '',
-            `Priority: <strong>${escapeHtml(project.priority)}</strong>${project.due_date ? ` · Target date: <strong>${escapeHtml(project.due_date)}</strong>` : ''}`,
-          ].filter(Boolean),
+            `Hi ${escapeHtml(m.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> added a new subject to <strong>${escapeHtml(ctx.team.name)}</strong>.`,
+          ],
+          details: [
+            { label: 'Group', value: ctx.team.name },
+            { label: 'Priority', value: project.priority },
+            { label: 'Target date', value: formatDay(project.due_date) || 'Not set' },
+          ],
+          quote: project.description ? { label: 'About this subject', text: project.description } : undefined,
           cta: { label: 'View subject', url: APP_URL },
         }));
     }
@@ -244,12 +253,15 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       return [{
         to: ctx.assignee.email,
         subject: `New task for you: ${ctx.task.title}`,
-        heading: 'A task was assigned to you',
+        tag: 'New task',
+        heading: ctx.task.title,
+        preheader: `${ctx.caller.full_name} assigned you a task in ${ctx.team.name}.`,
         paragraphs: [
-          `Hi ${escapeHtml(ctx.assignee.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> assigned you <strong>${escapeHtml(ctx.task.title)}</strong> in ${escapeHtml(ctx.team.name)}.`,
-          ctx.task.due_date ? `Due: <strong>${escapeHtml(ctx.task.due_date)}</strong>` : '',
-        ].filter(Boolean),
-        cta: { label: 'Open TaskSync', url: APP_URL },
+          `Hi ${escapeHtml(ctx.assignee.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> assigned you a task.`,
+        ],
+        details: taskDetails(ctx),
+        cta: { label: 'Open the task', url: APP_URL },
+        note: 'When it is done, submit it for review from the task.',
       }];
     }
 
@@ -261,12 +273,16 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
         .map((leader) => ({
           to: leader.email,
           subject: `Ready for review: ${ctx.task.title}`,
-          heading: 'A task is waiting for your review',
+          tag: 'Ready for review',
+          tone: 'ochre',
+          heading: ctx.task.title,
+          preheader: `${ctx.caller.full_name} submitted a task for your review.`,
           paragraphs: [
-            `<strong>${escapeHtml(ctx.caller.full_name)}</strong> submitted <strong>${escapeHtml(ctx.task.title)}</strong> in ${escapeHtml(ctx.team.name)} for review.`,
-            'Approve it or request changes from the task details.',
+            `Hi ${escapeHtml(leader.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> finished this task and submitted it for your review.`,
           ],
+          details: [{ label: 'Submitted by', value: ctx.caller.full_name }, ...taskDetails(ctx)],
           cta: { label: 'Review task', url: APP_URL },
+          note: 'Approve it, or request changes with a short note.',
         }));
     }
 
@@ -279,14 +295,21 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       return [{
         to: ctx.assignee.email,
         subject: approved ? `Approved: ${ctx.task.title}` : `Changes requested: ${ctx.task.title}`,
-        heading: approved ? 'Your task was approved' : 'Changes were requested on your task',
+        tag: approved ? 'Approved' : 'Changes requested',
+        tone: approved ? 'moss' : 'terracotta',
+        heading: ctx.task.title,
+        preheader: approved
+          ? `${ctx.caller.full_name} approved your task. Nice work.`
+          : `${ctx.caller.full_name} asked for changes on your task.`,
         paragraphs: [
           approved
-            ? `<strong>${escapeHtml(ctx.caller.full_name)}</strong> approved <strong>${escapeHtml(ctx.task.title)}</strong>. It is now marked Completed.`
-            : `<strong>${escapeHtml(ctx.caller.full_name)}</strong> asked for changes on <strong>${escapeHtml(ctx.task.title)}</strong>.`,
-          !approved && body.feedback ? `Feedback: “${escapeHtml(body.feedback.slice(0, 1000))}”` : '',
-        ].filter(Boolean),
+            ? `Nice work, ${escapeHtml(ctx.assignee.full_name)}. <strong>${escapeHtml(ctx.caller.full_name)}</strong> approved your task and it is now marked <strong>Completed</strong>.`
+            : `Hi ${escapeHtml(ctx.assignee.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> reviewed your task and asked for a few changes.`,
+        ],
+        details: [{ label: 'Reviewed by', value: ctx.caller.full_name }, ...taskDetails(ctx)],
+        quote: !approved && body.feedback ? { label: 'Feedback', text: body.feedback.slice(0, 1000) } : undefined,
         cta: { label: 'Open the task', url: APP_URL },
+        note: approved ? undefined : 'Make the changes, then submit the task for review again.',
       }];
     }
 
@@ -300,21 +323,29 @@ async function buildMails(db: SupabaseClient, callerId: string, body: Record<str
       const tz = body.time_zone && /^[A-Za-z_]+\/[A-Za-z_\/+-]+$/.test(body.time_zone) ? body.time_zone : 'UTC';
       const when = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: tz, timeZoneName: 'short' })
         .format(new Date(session.starts_at));
-      const where = [session.location, session.meeting_url].filter(Boolean).map((v) => escapeHtml(v)).join(' or ');
+      const where = [session.location, session.meeting_url].filter(Boolean).join(' or ');
+      const subjectName = session.project_id
+        ? (await db.from('projects').select('name').eq('id', session.project_id).maybeSingle()).data?.name ?? ''
+        : '';
       return ctx.members
         .filter((m) => m.id !== callerId)
         .map((m) => ({
           to: m.email,
           subject: `Study session: ${session.title} (${ctx.team.name})`,
+          tag: 'Study session',
           heading: session.title,
+          preheader: `${when} · ${ctx.team.name}`,
           paragraphs: [
             `Hi ${escapeHtml(m.full_name)}, <strong>${escapeHtml(ctx.caller.full_name)}</strong> scheduled a study session for <strong>${escapeHtml(ctx.team.name)}</strong>.`,
-            `<strong>When:</strong> ${escapeHtml(when)} (${session.duration_minutes} minutes)`,
-            where ? `<strong>Where:</strong> ${where}` : '',
-            session.agenda ? `<strong>Agenda:</strong> ${escapeHtml(session.agenda)}` : '',
-            'Open TaskSync to say whether you are going.',
-          ].filter(Boolean),
-          cta: { label: 'RSVP in TaskSync', url: APP_URL },
+          ],
+          details: [
+            { label: 'When', value: when },
+            { label: 'Length', value: `${session.duration_minutes} minutes` },
+            ...(where ? [{ label: 'Where', value: where }] : []),
+            ...(subjectName ? [{ label: 'Subject', value: subjectName }] : []),
+          ],
+          quote: session.agenda ? { label: 'Agenda', text: session.agenda } : undefined,
+          cta: { label: 'Say if you are going', url: APP_URL },
         }));
     }
 

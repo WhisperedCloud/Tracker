@@ -12,6 +12,13 @@ Built with **React + Vite**, **Tailwind CSS** and **Supabase** (Postgres, Auth, 
 - Create a study group and invite classmates by email. People who already have an account join right away; others get an invite email and link.
 - Any member can add **subjects** (Course, Exam Prep, Assignment, Project, Revision, Research) and **tasks**, and assign a task to anyone in the group.
 - Subject progress is worked out from completed tasks.
+- **Subject status updates by itself** from its tasks: nothing started &rarr; *Planning*; anything started, or some done and some not &rarr; *In Progress*; everything done &rarr; *Completed*. Reopening a task moves it back. A main task with subtasks counts through its subtasks. The database keeps this in sync for every member (trigger `refresh_project_status`).
+- **Priority** (Low, Medium, High, Urgent) and **status** (Planning, In Progress, Completed, On Hold) can be changed from a dropdown on the subject card, the subject page, or **Edit subject**. Picking a status other than the automatic one (for example *On Hold*) sets it by hand; it stays until someone clicks **use automatic**. Only the subject's creator and group organizers can change these.
+- **Your own subject order**: drag subjects by their handle (mouse, touch or keyboard) or use the up/down arrows. The order is saved to your account, so it is the same after signing out and on other devices. Sort by Custom Order (default), Name, Priority or Due Date.
+- Edit or delete subjects, study groups (organizers edit; the creator deletes; anyone can leave), tasks, comments, attachments, resources, questions, answers and study-time entries.
+
+### Reports
+- Click any chart for a full-size view with labels, summary numbers and the underlying data in a table: subject-wise completion (with status and priority), member-wise allocation (completed, pending, under review, overdue) and tasks created vs completed per week or month. The Weekly/Monthly choice is kept while you open and close charts.
 
 ### Tasks and review
 - `To Do` → `In Progress` → `Under Review` → `Changes Requested` → `Completed` (or `Blocked`).
@@ -106,6 +113,14 @@ Open `http://localhost:5173` in your browser.
 npm run build
 ```
 
+### 5. Tests
+```bash
+npm test
+```
+Unit tests cover the subject status rules, ordering, sorting and report periods (`src/lib/*.test.js`).
+
+To run the app against a local Supabase (`npx supabase start`), point `VITE_SUPABASE_URL` at `http://127.0.0.1:54321`; plain `http` is accepted for localhost only.
+
 ---
 
 ## 🗄️ Supabase Setup
@@ -121,6 +136,8 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 4. In **Authentication &rarr; URL Configuration**, set **Site URL** to where the app runs (`http://localhost:5173` locally, your Vercel URL in production) and add both to **Redirect URLs**. Email verification and password-reset links use these.
 5. Restart `npm run dev`.
+
+**Upgrading an existing project:** run `supabase/migrations/20261113_subject_status_order_crud.sql` once in the SQL Editor (or re-run the whole `schema.sql`). It adds automatic subject status, the saved subject order, and the edit/delete permissions. Existing subjects marked *On Hold* or *Cancelled* keep that status as a manual choice; all others are recalculated from their tasks.
 
 ### Inviting people
 

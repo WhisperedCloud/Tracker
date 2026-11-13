@@ -4,10 +4,15 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useData } from '@/context/DataContext';
+import { SUBJECT_PRIORITIES, SUBJECT_STATUSES } from '@/lib/subjects';
 
-export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
+// Adds a subject, or edits one when `project` is passed.
+export function CreateProjectModal({ isOpen, onClose, initialTeamId = null, project = null }) {
   // Any group you belong to can get a new subject.
-  const { memberTeams: teams, createProject } = useData();
+  const { memberTeams, teams: allTeams, createProject, updateProject } = useData();
+  const isEditing = Boolean(project);
+  // A subject stays in its group (its tasks belong to that group).
+  const teams = isEditing ? allTeams.filter(t => t.id === project.team_id) : memberTeams;
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -21,7 +26,17 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    if (project) {
+      setName(project.name || '');
+      setDescription(project.description || '');
+      setTeamId(project.team_id);
+      setPriority(project.priority || 'Medium');
+      setStatus(project.status || 'Planning');
+      setCategory(project.category || 'Course');
+      setStartDate(project.start_date || '');
+      setDueDate(project.due_date || '');
+    } else {
       setName('');
       setDescription('');
       setTeamId(initialTeamId || (teams[0] ? teams[0].id : ''));
@@ -30,10 +45,10 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
       setCategory('Course');
       setStartDate(new Date().toISOString().split('T')[0]);
       setDueDate('');
-      setError('');
     }
+    setError('');
     // Reset only when the modal opens.
-  }, [isOpen, initialTeamId]);
+  }, [isOpen, initialTeamId, project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -52,19 +67,24 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
     }
 
     setSaving(true);
-    const created = await createProject({
+    const fields = {
       name: name.trim(),
       description: description.trim(),
-      team_id: teamId,
       priority,
-      status,
       category,
       start_date: startDate,
       due_date: dueDate
-    });
+    };
+    let saved;
+    if (isEditing) {
+      // Only send the status when it changed, so an automatic subject stays automatic.
+      saved = await updateProject(project.id, status !== project.status ? { ...fields, status } : fields);
+    } else {
+      saved = await createProject({ ...fields, team_id: teamId });
+    }
     setSaving(false);
 
-    if (created) onClose();
+    if (saved) onClose();
     else setError('The subject could not be saved. Check the message in the corner and try again.');
   };
 
@@ -72,8 +92,8 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Add a Subject"
-      description="Add a course, exam or assignment for the group to work on."
+      title={isEditing ? 'Edit Subject' : 'Add a Subject'}
+      description={isEditing ? 'Change the details, priority or status of this subject.' : 'Add a course, exam or assignment for the group to work on.'}
       size="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -109,6 +129,7 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
             label="Study Group *"
             value={teamId}
             onChange={(e) => setTeamId(e.target.value)}
+            disabled={isEditing}
           >
             {teams.map((t) => (
               <option key={t.id} value={t.id}>
@@ -137,24 +158,29 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
             value={priority}
             onChange={(e) => setPriority(e.target.value)}
           >
-            <option value="Low">Low</option>
-            <option value="Medium">Medium</option>
-            <option value="High">High</option>
-            <option value="Urgent">Urgent</option>
+            {SUBJECT_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
           </Select>
 
-          <Select
-            label="Initial Status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="Planning">Planning</option>
-            <option value="Not Started">Not Started</option>
-            <option value="In Progress">In Progress</option>
-            <option value="On Hold">On Hold</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </Select>
+          {isEditing ? (
+            <Select
+              label="Status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              helperText={project.status_manual ? `Set by hand. Pick "${project.auto_status}" to follow the tasks again.` : 'Follows the tasks automatically. Pick another status to set it by hand.'}
+            >
+              {!SUBJECT_STATUSES.includes(project.status) && <option value={project.status} disabled>{project.status}</option>}
+              {SUBJECT_STATUSES.map(s => (
+                <option key={s} value={s}>{s}{s === project.auto_status ? ' (auto)' : ''}</option>
+              ))}
+            </Select>
+          ) : (
+            <div className="w-full">
+              <span className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">Status</span>
+              <p className="text-xs text-slate-500 leading-relaxed pt-1">
+                Starts in Planning and updates by itself as tasks are started and completed.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -178,7 +204,7 @@ export function CreateProjectModal({ isOpen, onClose, initialTeamId = null }) {
             Cancel
           </Button>
           <Button type="submit" disabled={saving || teams.length === 0}>
-            {saving ? 'Saving...' : 'Add Subject'}
+            {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Add Subject'}
           </Button>
         </div>
       </form>

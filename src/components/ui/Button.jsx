@@ -2,7 +2,7 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 
 const baseStyles =
-  'inline-flex items-center justify-center font-medium rounded-lg transition-[background-color,border-color,color,transform] duration-150 ' +
+  'inline-flex items-center justify-center font-heading font-medium rounded-lg transition-[background-color,border-color,color,transform] duration-150 ' +
   'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 dark:focus-visible:ring-offset-slate-950 ' +
   'disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98]';
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import { supabase } from '@/lib/supabase';
 import { isOverdue, getWorkloadLevel, newId, emptyToNull } from '@/lib/utils';
@@ -6,6 +6,14 @@ import { sendEmail } from '@/lib/email';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './NotificationContext';
 import { siteLink } from '@/lib/platform';
+import {
+  getWorkItems,
+  computeSubjectStatus,
+  computeSubjectProgress,
+  effectiveStatus,
+  statusChange,
+  applyCustomOrder,
+} from '@/lib/subjects';
 
 const DataContext = createContext();
 
@@ -56,7 +64,10 @@ export function DataProvider({ children }) {
   const [teams, setTeams] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamInvitations, setTeamInvitations] = useState([]);
-  const [projects, setProjects] = useState([]);
+  // Rows as stored. Pages read `projects` (below), which carries the live status.
+  const [projectRows, setProjects] = useState([]);
+  // This person's custom subject order (ids), saved on their profile.
+  const [subjectOrder, setSubjectOrder] = useState(() => user?.subject_order || []);
   const [tasks, setTasks] = useState([]);
   const [personalTasks, setPersonalTasks] = useState([]);
   const [comments, setComments] = useState([]);
@@ -126,6 +137,10 @@ export function DataProvider({ children }) {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    setSubjectOrder(user?.subject_order || []);
+  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fire-and-forget email; a failure shows a toast but never undoes the save.
   const notifyByEmail = useCallback((type, payload) => {
@@ -247,17 +262,26 @@ export function DataProvider({ children }) {
   };
 
   // ----------------------------------------------------
-  // Calculations
-  // Project progress = completed subtasks / total subtasks x 100
+  // Subjects as every page sees them: status worked out from their tasks
+  // (unless set by hand), in this person's custom order. The database keeps
+  // the same status through a trigger; computing it here as well means a
+  // change shows at once, before the round trip.
   // ----------------------------------------------------
-  const getProjectProgress = (projectId) => {
-    const projectTasks = tasks.filter(t => t.project_id === projectId);
-    const subtasks = projectTasks.filter(t => t.parent_task_id);
-    const basis = subtasks.length > 0 ? subtasks : projectTasks;
-    if (basis.length === 0) return 0;
-    const completed = basis.filter(t => t.status === 'Completed').length;
-    return Math.round((completed / basis.length) * 100);
-  };
+  const projects = useMemo(() => {
+    const withStatus = projectRows.map((p) => {
+      const autoStatus = computeSubjectStatus(getWorkItems(p.id, tasks));
+      return { ...p, auto_status: autoStatus, status: effectiveStatus(p, autoStatus) };
+    });
+    return applyCustomOrder(withStatus, subjectOrder);
+  }, [projectRows, tasks, subjectOrder]);
+
+  // ----------------------------------------------------
+  // Calculations
+  // Subject progress = completed work items / all work items x 100
+  // ----------------------------------------------------
+  // Work items = tasks with no subtasks of their own (see src/lib/subjects.js).
+  const getProjectWorkItems = (projectId) => getWorkItems(projectId, tasks);
+  const getProjectProgress = (projectId) => computeSubjectProgress(getProjectWorkItems(projectId));
 
   const getSubtasks = (parentTaskId) => tasks.filter(t => t.parent_task_id === parentTaskId);
 
@@ -353,6 +377,38 @@ export function DataProvider({ children }) {
 
     addNotification({ title: 'Study group created', message: `You created the study group "${name}".`, type: 'team_invite' });
     return team;
+  };
+
+  // Organizers rename a group or change its description.
+  const updateTeam = async (teamId, { name, description, avatar_url }) => {
+    const previous = teams.find(t => t.id === teamId);
+    if (!previous) return null;
+    const changes = { name: name.trim(), description: (description || '').trim() };
+    if (avatar_url !== undefined) changes.avatar_url = avatar_url || previous.avatar_url;
+    setTeams(prev => prev.map(t => (t.id === teamId ? { ...t, ...changes } : t)));
+    const result = await run('Could not update the study group', supabase.from('teams').update(changes).eq('id', teamId));
+    if (!result.ok) {
+      setTeams(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...changes };
+  };
+
+  // Only the person who created a group can delete it; everything in it goes too.
+  const deleteTeam = async (teamId) => {
+    const result = await run('Could not delete the study group', supabase.from('teams').delete().eq('id', teamId));
+    if (result.ok) await loadAll();
+    return result.ok;
+  };
+
+  // Anyone can leave a group they are in.
+  const leaveTeam = async (teamId) => {
+    const membership = teamMembers.find(tm => tm.team_id === teamId && tm.user_id === userId);
+    if (!membership) return false;
+    const result = await run('Could not leave the study group',
+      supabase.from('team_members').delete().eq('id', membership.id));
+    if (result.ok) await loadAll();
+    return result.ok;
   };
 
   // Adds an existing user straight away; otherwise stores an invitation that
@@ -501,7 +557,9 @@ export function DataProvider({ children }) {
       name: projectData.name,
       description: projectData.description || '',
       priority: projectData.priority || 'Medium',
-      status: projectData.status || 'Planning',
+      // New subjects have no tasks yet, so they start in Planning; the
+      // status then follows the tasks.
+      status: 'Planning',
       category: projectData.category || 'Course',
       start_date: projectData.start_date || new Date().toISOString().split('T')[0],
       due_date: projectData.due_date,
@@ -524,9 +582,17 @@ export function DataProvider({ children }) {
   };
 
   const updateProject = async (projectId, updates) => {
-    const previous = projects.find(p => p.id === projectId);
+    const previous = projectRows.find(p => p.id === projectId);
     if (!previous) return null;
-    const clean = cleanDates({ ...updates, updated_at: nowIso() });
+    const changes = { ...updates };
+    delete changes.auto_status;
+    // A status picked by hand stays until reset; picking the status the
+    // tasks already give keeps the subject automatic.
+    if ('status' in changes && !('status_manual' in changes)) {
+      const autoStatus = computeSubjectStatus(getWorkItems(projectId, tasks));
+      Object.assign(changes, statusChange(changes.status, autoStatus));
+    }
+    const clean = cleanDates({ ...changes, updated_at: nowIso() });
     setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, ...clean } : p)));
     const result = await run('Could not update the subject',
       supabase.from('projects').update(clean).eq('id', projectId));
@@ -537,8 +603,26 @@ export function DataProvider({ children }) {
     return { ...previous, ...clean };
   };
 
+  const setProjectStatus = (projectId, status) => updateProject(projectId, { status });
+
+  // Back to automatic: the status follows the tasks again.
+  const resetProjectStatus = (projectId) => {
+    const autoStatus = computeSubjectStatus(getWorkItems(projectId, tasks));
+    return updateProject(projectId, { status: autoStatus, status_manual: false });
+  };
+
+  // Save this person's custom order of subjects (a list of subject ids).
+  const saveSubjectOrder = async (orderedIds) => {
+    const previous = subjectOrder;
+    setSubjectOrder(orderedIds);
+    const result = await run('Could not save your subject order',
+      supabase.from('profiles').update({ subject_order: orderedIds }).eq('id', userId));
+    if (!result.ok) setSubjectOrder(previous);
+    return result.ok;
+  };
+
   const deleteProject = async (projectId) => {
-    const previousProject = projects.find(p => p.id === projectId);
+    const previousProject = projectRows.find(p => p.id === projectId);
     const previousTasks = tasks.filter(t => t.project_id === projectId);
     setProjects(prev => removeById(prev, projectId));
     setTasks(prev => prev.filter(t => t.project_id !== projectId));
@@ -800,6 +884,46 @@ export function DataProvider({ children }) {
     return comment;
   };
 
+  // Authors edit their own comments.
+  const updateComment = async (commentId, text) => {
+    const previous = comments.find(c => c.id === commentId);
+    if (!previous) return null;
+    const changes = { comment: text, updated_at: nowIso() };
+    setComments(prev => prev.map(c => (c.id === commentId ? { ...c, ...changes } : c)));
+    const result = await run('Could not update the comment',
+      supabase.from('task_comments').update(changes).eq('id', commentId));
+    if (!result.ok) {
+      setComments(prev => upsertById(prev, previous));
+      return null;
+    }
+    return { ...previous, ...changes };
+  };
+
+  // Authors, the task's creator and organizers delete comments.
+  const deleteComment = async (commentId) => {
+    const previous = comments.find(c => c.id === commentId);
+    setComments(prev => removeById(prev, commentId));
+    const result = await run('Could not delete the comment', supabase.from('task_comments').delete().eq('id', commentId));
+    if (!result.ok && previous) setComments(prev => [...prev, previous].sort((a, b) => a.created_at.localeCompare(b.created_at)));
+  };
+
+  // The uploader, the task's creator and organizers remove attachments.
+  const deleteAttachment = async (attachment) => {
+    setAttachments(prev => removeById(prev, attachment.id));
+    const result = await run('Could not remove the attachment',
+      supabase.from('task_attachments').delete().eq('id', attachment.id));
+    if (!result.ok) {
+      setAttachments(prev => upsertById(prev, attachment));
+      return false;
+    }
+    logActivity(attachment.task_id, 'attachment_removed', '', attachment.file_name);
+    if (!/^https?:\/\//.test(attachment.file_url)) {
+      const { error } = await supabase.storage.from(ATTACHMENTS_BUCKET).remove([attachment.file_url]);
+      if (error) console.warn('Attachment file not removed:', error.message);
+    }
+    return true;
+  };
+
   // Uploads the file to Supabase Storage, then records it on the task.
   const addAttachment = async (taskId, file) => {
     const safeName = file.name.replace(/[^\w.-]+/g, '_');
@@ -878,10 +1002,18 @@ export function DataProvider({ children }) {
         declineInvitation,
         removeMember,
         updateMemberRole,
+        updateTeam,
+        deleteTeam,
+        leaveTeam,
         // Projects
         createProject,
         updateProject,
+        setProjectStatus,
+        resetProjectStatus,
         deleteProject,
+        subjectOrder,
+        saveSubjectOrder,
+        getProjectWorkItems,
         // Tasks
         createTask,
         updateTask,
@@ -896,7 +1028,10 @@ export function DataProvider({ children }) {
         deletePersonalTask,
         // Comments & attachments
         addComment,
+        updateComment,
+        deleteComment,
         addAttachment,
+        deleteAttachment,
         getAttachmentUrl,
         logActivity,
       }}
